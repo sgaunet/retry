@@ -1,0 +1,14 @@
+name: Exec testsuite
+
+testcases:
+- name: init
+  steps:
+
+- name: get version
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* -version
+    assertions:
+    - result.code ShouldEqual 0

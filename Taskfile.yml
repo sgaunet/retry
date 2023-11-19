@@ -1,0 +1,36 @@
+# https://taskfile.dev
+version: '3'
+vars:
+  BINFILE: retry
+
+includes:
+  dev: ./Taskfile_dev.yml
+
+tasks:
+  default:
+    desc: "List tasks"
+    cmds:
+      - task -a
+
+  binary:
+    desc: "Build binary"
+    cmds:
+      # - go generate ./...
+      - CGO_ENABLED=0 go build -o {{.BINFILE}} cmd/*.go
+    # silent: true
+
+  tests:
+    desc: "Run tests"
+    dir: tests
+    cmds:
+      - venom run testsuite.yml --output-dir="log" --stop-on-failure
+
+  snapshot:
+    desc: "Create snapshot"
+    cmds:
+      - GITLAB_TOKEN="" goreleaser --clean --snapshot
+    
+  release:
+    desc: "Create release"
+    cmds:
+      - GITLAB_TOKEN="" goreleaser --clean
