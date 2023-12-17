@@ -1,3 +1,6 @@
+[![Go Report Card](https://goreportcard.com/badge/github.com/sgaunet/retry)](https://goreportcard.com/report/github.com/sgaunet/retry)
+
+
 # template-cli
 
 retry command will execute X times a failed command until it's successful. Interesting for flakky tests for example or to wait after something.
