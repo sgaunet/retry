@@ -23,6 +23,10 @@ Usage of retry:
         print version
 ```
 
+Demo:
+
+![demo](doc/demo.gif)
+
 # Install
 
 ## From binary 
