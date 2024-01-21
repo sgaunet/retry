@@ -5,9 +5,11 @@ import (
 	"time"
 
 	"github.com/sgaunet/retry/pkg/retry"
+	"go.uber.org/goleak"
 )
 
 func TestEmptyCommand(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	retry, err := retry.NewRetry("", retry.NewStopOnMaxTries(3))
 	if err != nil {
 		t.Errorf("Expected no error")
@@ -19,6 +21,7 @@ func TestEmptyCommand(t *testing.T) {
 }
 
 func TestRetryWithSleep(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	retry, err := retry.NewRetry("ls -l '/sdfsdfqsdbj'", retry.NewStopOnMaxTries(3))
 	if err != nil {
 		t.Errorf("Expected no error")
@@ -38,6 +41,7 @@ func TestRetryWithSleep(t *testing.T) {
 }
 
 func TestRetryWithSleep2(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	retry, err := retry.NewRetry("sleep 4", retry.NewStopOnMaxExecTime(5*time.Millisecond))
 	if err != nil {
 		t.Errorf("Expected no error")
