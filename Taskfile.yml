@@ -19,6 +19,11 @@ tasks:
       - CGO_ENABLED=0 go build -o {{.BINFILE}} cmd/*.go
     # silent: true
 
+  linter:
+    desc: "Run linter"
+    cmds:
+      - golangci-lint run --config=.github/linters/.golangci.yml
+
   tests:
     desc: "Run tests"
     dir: tests

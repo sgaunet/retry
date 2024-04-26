@@ -71,7 +71,7 @@ func execCommand(ctx context.Context, cmd string) error {
 	if len(splitCmd) == 0 {
 		return nil
 	}
-	c := exec.CommandContext(ctx, splitCmd[0], splitCmd[1:]...)
+	c := exec.CommandContext(ctx, splitCmd[0], splitCmd[1:]...) //nolint:gosec
 
 	stderr, err := c.StderrPipe()
 	if err != nil {

@@ -46,13 +46,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	retry, err := retry.NewRetry(command, retry.NewStopOnMaxTries(maxtries))
+	r, err := retry.NewRetry(command, retry.NewStopOnMaxTries(maxtries))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	retry.SetSleep(func() { time.Sleep(time.Duration(sleepTimeInSeconds) * time.Second) })
-	err = retry.Run()
+	r.SetSleep(func() { time.Sleep(time.Duration(sleepTimeInSeconds) * time.Second) })
+	err = r.Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

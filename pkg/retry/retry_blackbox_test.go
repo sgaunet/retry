@@ -10,11 +10,11 @@ import (
 
 func TestEmptyCommand(t *testing.T) {
 	defer goleak.VerifyNone(t)
-	retry, err := retry.NewRetry("", retry.NewStopOnMaxTries(3))
+	r, err := retry.NewRetry("", retry.NewStopOnMaxTries(3))
 	if err != nil {
 		t.Errorf("Expected no error")
 	}
-	err = retry.Run()
+	err = r.Run()
 	if err == nil {
 		t.Errorf("Expected an error")
 	}
@@ -22,15 +22,15 @@ func TestEmptyCommand(t *testing.T) {
 
 func TestRetryWithSleep(t *testing.T) {
 	defer goleak.VerifyNone(t)
-	retry, err := retry.NewRetry("ls -l '/sdfsdfqsdbj'", retry.NewStopOnMaxTries(3))
+	r, err := retry.NewRetry("ls -l '/sdfsdfqsdbj'", retry.NewStopOnMaxTries(3))
 	if err != nil {
 		t.Errorf("Expected no error")
 	}
-	retry.SetSleep(func() {
+	r.SetSleep(func() {
 		time.Sleep(1 * time.Second)
 	})
 	startTime := time.Now()
-	err = retry.Run()
+	err = r.Run()
 	endTime := time.Now()
 	if err == nil {
 		t.Errorf("Expected error")
@@ -42,17 +42,17 @@ func TestRetryWithSleep(t *testing.T) {
 
 func TestRetryWithSleep2(t *testing.T) {
 	defer goleak.VerifyNone(t)
-	retry, err := retry.NewRetry("sleep 4", retry.NewStopOnMaxExecTime(5*time.Millisecond))
+	r, err := retry.NewRetry("sleep 4", retry.NewStopOnMaxExecTime(5*time.Millisecond))
 	if err != nil {
 		t.Errorf("Expected no error")
 	}
-	// startTime := time.Now()
-	err = retry.Run()
-	// endTime := time.Now()
+	startTime := time.Now()
+	err = r.Run()
+	endTime := time.Now()
 	if err == nil {
 		t.Errorf("Expected error")
 	}
-	// if endTime.Sub(startTime) < 3*time.Second {
-	// 	t.Errorf("Expected at least 3 seconds, got %v", endTime.Sub(startTime))
-	// }
+	if endTime.Sub(startTime) < 3*time.Second {
+		t.Errorf("Expected at least 3 seconds, got %v", endTime.Sub(startTime))
+	}
 }
