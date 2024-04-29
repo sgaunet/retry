@@ -4,7 +4,7 @@ go 1.21.2
 
 require (
 	github.com/go-andiamo/splitter v1.2.5
-	github.com/stretchr/testify v1.8.1
+	github.com/stretchr/testify v1.9.0
 	go.uber.org/goleak v1.3.0
 )
 
