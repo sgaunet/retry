@@ -23,7 +23,7 @@ func main() {
 		printVersionFlag   bool
 		helpFlag           bool
 	)
-	flag.UintVar(&maxtries, "m", 3, "max tries of execution of failed command")
+	flag.UintVar(&maxtries, "m", 3, "max tries of execution of failed command (0 for infinite tries)")
 	flag.UintVar(&sleepTimeInSeconds, "s", 0, "sleep time in seconds between each try")
 	flag.StringVar(&command, "c", "", "command to execute")
 	flag.BoolVar(&printVersionFlag, "version", false, "print version")
