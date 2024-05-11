@@ -1,6 +1,8 @@
 package retry_test
 
 import (
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -9,13 +11,15 @@ import (
 	"go.uber.org/goleak"
 )
 
+var nologger *slog.Logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
+
 func TestEmptyCommand(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	r, err := retry.NewRetry("", retry.NewStopOnMaxTries(3))
 	if err != nil {
 		t.Errorf("Expected no error")
 	}
-	err = r.Run()
+	err = r.Run(nologger)
 	if err == nil {
 		t.Errorf("Expected an error")
 	}
@@ -31,7 +35,7 @@ func TestRetryWithSleep(t *testing.T) {
 		time.Sleep(1 * time.Second)
 	})
 	startTime := time.Now()
-	err = r.Run()
+	err = r.Run(nologger)
 	endTime := time.Now()
 	if err == nil {
 		t.Errorf("Expected error")
@@ -46,7 +50,7 @@ func TestRetryWithSleep2(t *testing.T) {
 	r, err := retry.NewRetry("bash -c 'sleep 4'", retry.NewStopOnMaxExecTime(50*time.Millisecond))
 	assert.Nil(t, err)
 	startTime := time.Now()
-	err = r.Run()
+	err = r.Run(nologger)
 	endTime := time.Now()
 	assert.NotNil(t, err, "command should be stopped by max exec time")
 	assert.GreaterOrEqual(t, endTime.Sub(startTime).Milliseconds(), int64(50), "Expected at least 50 Milliseconds")

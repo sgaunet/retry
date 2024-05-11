@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -30,6 +31,10 @@ func main() {
 	flag.BoolVar(&helpFlag, "h", false, "print help")
 	flag.Parse()
 
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+
 	if helpFlag {
 		flag.Usage()
 		os.Exit(0)
@@ -52,7 +57,7 @@ func main() {
 		os.Exit(1)
 	}
 	r.SetSleep(func() { time.Sleep(time.Duration(sleepTimeInSeconds) * time.Second) })
-	err = r.Run()
+	err = r.Run(logger)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
