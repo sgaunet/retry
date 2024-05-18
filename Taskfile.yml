@@ -24,6 +24,14 @@ tasks:
     cmds:
       - golangci-lint run --config=.github/linters/.golangci.yml
 
+  cover:
+    desc: "Run unit tests"
+    cmds:
+      - go generate ./...
+      - go test -coverpkg=./... -coverprofile=profile.cov ./...
+      - go tool cover -func profile.cov
+      - rm profile.cov
+
   tests:
     desc: "Run tests"
     dir: tests
