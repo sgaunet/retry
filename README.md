@@ -37,7 +37,7 @@ Download the binary in the release section.
 
 ## From Docker image
 
-Docker registry is: sgaunet/retry
+Docker registry is: ghcr.io/sgaunet/retry
 
 The docker image is only interesting to copy the binary in your docker image.
 
