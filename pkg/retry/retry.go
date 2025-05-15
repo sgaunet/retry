@@ -1,8 +1,10 @@
+// Package retry provides a simple way to retry a command execution based on a condition.
 package retry
 
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,13 +14,22 @@ import (
 	"github.com/go-andiamo/splitter"
 )
 
-type retry struct {
+var (
+	// ErrConditionNil is returned when the condition is nil.
+	ErrConditionNil = errors.New("condition is nil")
+	// ErrMaxTriesReached is returned when the maximum number of tries is reached.
+	ErrMaxTriesReached = errors.New("max tries reached")
+)
+
+// Retry is a struct that represents a retry mechanism for executing commands.
+type Retry struct {
 	cmd       string
 	sleep     func()
 	tries     int
 	condition ConditionRetryer
 }
 
+// ConditionRetryer is an interface that defines the methods required for a retry condition.
 type ConditionRetryer interface {
 	GetCtx() context.Context
 	IsLimitReached() bool
@@ -26,23 +37,28 @@ type ConditionRetryer interface {
 	EndTry()
 }
 
-func NewRetry(cmd string, condition ConditionRetryer) (*retry, error) {
-	r := &retry{
+// NewRetry creates a new retry instance with the given command and condition.
+func NewRetry(cmd string, condition ConditionRetryer) (*Retry, error) {
+	r := &Retry{
 		cmd:       cmd,
 		sleep:     nil,
 		condition: condition,
 	}
 	if r.condition == nil {
-		return nil, fmt.Errorf("condition is nil")
+		return nil, ErrConditionNil
 	}
 	return r, nil
 }
 
-func (r *retry) SetSleep(sleep func()) {
+// SetSleep sets the sleep function to be used between retries.
+func (r *Retry) SetSleep(sleep func()) {
 	r.sleep = sleep
 }
 
-func (r *retry) Run(logger *slog.Logger) error {
+// Run executes the command with retries based on the condition.
+// It returns an error if the command fails or if the maximum number of tries is reached.
+// It also logs the output of the command to the provided logger.
+func (r *Retry) Run(logger *slog.Logger) error {
 	var (
 		err error
 	)
@@ -74,7 +90,7 @@ func (r *retry) Run(logger *slog.Logger) error {
 		err = r.condition.GetCtx().Err()
 	}
 	if r.condition.IsLimitReached() {
-		err = fmt.Errorf("max tries reached")
+		err = ErrMaxTriesReached
 	}
 	return err
 }
@@ -90,12 +106,12 @@ func execCommand(ctx context.Context, cmd string) (int, error) {
 
 	stderr, err := c.StderrPipe()
 	if err != nil {
-		return -1, err
+		return -1, fmt.Errorf("error creating stderr pipe: %w", err)
 	}
 
 	stdout, err := c.StdoutPipe()
 	if err != nil {
-		return -1, err
+		return -1, fmt.Errorf("error creating stdout pipe: %w", err)
 	}
 
 	// print output in real time (both stdout and stderr)
@@ -104,21 +120,23 @@ func execCommand(ctx context.Context, cmd string) (int, error) {
 
 	err = c.Start()
 	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
 			// The command didn't exit successfully, so we can get the exit code
-			return exitError.ExitCode(), err
+			return exitError.ExitCode(), fmt.Errorf("command failed: %w", err)
 		}
 		// The command didn't start at all or exited because of a signal
-		return -1, err
+		return -1, fmt.Errorf("command failed: %w", err)
 	}
 	err = c.Wait()
 	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
 			// The command didn't exit successfully, so we can get the exit code
-			return exitError.ExitCode(), err
+			return exitError.ExitCode(), fmt.Errorf("command failed: %w", err)
 		}
 		// The command didn't start at all or exited because of a signal
-		return -1, err
+		return -1, fmt.Errorf("command failed: %w", err)
 	}
 	return 0, nil
 }

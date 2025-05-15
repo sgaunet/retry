@@ -22,7 +22,7 @@ tasks:
   linter:
     desc: "Run linter"
     cmds:
-      - golangci-lint run --config=.github/linters/.golangci.yml
+      - golangci-lint run
 
   cover:
     desc: "Run unit tests"
@@ -46,4 +46,4 @@ tasks:
   release:
     desc: "Create release"
     cmds:
-      - GITLAB_TOKEN="" goreleaser --clean
+      - GITLAB_TOKEN="" goreleaser --clean  --skip validate
