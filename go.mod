@@ -1,6 +1,6 @@
 module github.com/sgaunet/retry
 
-go 1.21.2
+go 1.24
 
 require (
 	github.com/go-andiamo/splitter v1.2.5
