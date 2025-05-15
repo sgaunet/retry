@@ -97,6 +97,7 @@ func (r *Retry) Run(logger *slog.Logger) error {
 
 func execCommand(ctx context.Context, cmd string) (int, error) {
 	var wg sync.WaitGroup
+	nbGoroutines := 2
 	commandSplitter, _ := splitter.NewSplitter(' ', splitter.SingleQuotes, splitter.DoubleQuotes)
 	trimmer := splitter.Trim("'\"")
 	splitCmd, _ := commandSplitter.Split(cmd, trimmer)
@@ -126,20 +127,21 @@ func execCommand(ctx context.Context, cmd string) (int, error) {
 		return -1, fmt.Errorf("command failed: %w", err)
 	}
 
-	wg.Add(2)
+	wg.Add(nbGoroutines)
 	go func() {
 		defer wg.Done()
-		io.Copy(os.Stdout, stdout)
+		_, _ = io.Copy(os.Stdout, stdout)
 	}()
 
 	go func() {
 		defer wg.Done()
-		io.Copy(os.Stderr, stderr)
+		_, _ = io.Copy(os.Stderr, stderr)
 	}()
 
 	err = c.Wait()
-	stderr.Close()
-	stdout.Close()
+	stderr.Close() //nolint:errcheck,gosec
+	stdout.Close() //nolint:errcheck,gosec
+	wg.Wait()
 	if err != nil {
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
