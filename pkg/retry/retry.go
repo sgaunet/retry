@@ -2,7 +2,6 @@
 package retry
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"sync"
 
 	"github.com/go-andiamo/splitter"
 )
@@ -96,6 +96,8 @@ func (r *Retry) Run(logger *slog.Logger) error {
 }
 
 func execCommand(ctx context.Context, cmd string) (int, error) {
+	var wg sync.WaitGroup
+	nbGoroutines := 2
 	commandSplitter, _ := splitter.NewSplitter(' ', splitter.SingleQuotes, splitter.DoubleQuotes)
 	trimmer := splitter.Trim("'\"")
 	splitCmd, _ := commandSplitter.Split(cmd, trimmer)
@@ -114,10 +116,6 @@ func execCommand(ctx context.Context, cmd string) (int, error) {
 		return -1, fmt.Errorf("error creating stdout pipe: %w", err)
 	}
 
-	// print output in real time (both stdout and stderr)
-	go printOutput(stdout, os.Stdout)
-	go printOutput(stderr, os.Stderr)
-
 	err = c.Start()
 	if err != nil {
 		var exitError *exec.ExitError
@@ -128,7 +126,22 @@ func execCommand(ctx context.Context, cmd string) (int, error) {
 		// The command didn't start at all or exited because of a signal
 		return -1, fmt.Errorf("command failed: %w", err)
 	}
+
+	wg.Add(nbGoroutines)
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(os.Stdout, stdout)
+	}()
+
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(os.Stderr, stderr)
+	}()
+
 	err = c.Wait()
+	stderr.Close() //nolint:errcheck,gosec
+	stdout.Close() //nolint:errcheck,gosec
+	wg.Wait()
 	if err != nil {
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
@@ -139,11 +152,4 @@ func execCommand(ctx context.Context, cmd string) (int, error) {
 		return -1, fmt.Errorf("command failed: %w", err)
 	}
 	return 0, nil
-}
-
-func printOutput(r io.Reader, w io.Writer) {
-	var reader = bufio.NewScanner(r)
-	for reader.Scan() {
-		_, _ = fmt.Fprintln(w, reader.Text())
-	}
 }
