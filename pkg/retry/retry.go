@@ -68,7 +68,8 @@ func (r *Retry) Run(logger *slog.Logger) error {
 		}
 		r.tries++
 		logger.Info("Try:", slog.Int("attempt n°", r.tries))
-		rc, err := execCommand(r.condition.GetCtx(), r.cmd)
+		var rc int
+		rc, err = execCommand(r.condition.GetCtx(), r.cmd)
 		if rc == 0 {
 			logger.Info("End", slog.Int("return code", rc))
 		} else {
@@ -88,8 +89,7 @@ func (r *Retry) Run(logger *slog.Logger) error {
 	}
 	if r.condition.GetCtx().Err() != nil {
 		err = r.condition.GetCtx().Err()
-	}
-	if r.condition.IsLimitReached() {
+	} else if r.condition.IsLimitReached() && err != nil {
 		err = ErrMaxTriesReached
 	}
 	return err

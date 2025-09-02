@@ -4,11 +4,321 @@ testcases:
 - name: init
   steps:
 
-- name: get version
+# =============================================================================
+# VERSION & HELP TESTS
+# =============================================================================
+
+- name: test-version-long-flag
   steps:
   - type: exec
     script: |
       cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* -version
+      go run cmd/* --version
     assertions:
     - result.code ShouldEqual 0
+    - result.systemout ShouldEqual "dev"
+
+- name: test-version-subcommand
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* version
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldEqual "dev"
+
+- name: test-help-long-flag
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --help
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "retry is a CLI tool"
+    - result.systemout ShouldContainSubstring "Usage:"
+    - result.systemout ShouldContainSubstring "Examples:"
+
+# =============================================================================
+# MODERN CLI INTERFACE TESTS
+# =============================================================================
+
+- name: test-positional-argument-success
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* "echo hello world"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "hello world"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-modern-max-tries-flag
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --max-tries 2 "sh -c 'exit 1'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "msg=Try:"
+    - result.systemout ShouldContainSubstring "return code"
+
+- name: test-short-flags
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* -t 1 -d 100ms "echo short flags work"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "short flags work"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-duration-formats
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --delay 500ms --max-tries 1 "echo duration test"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "duration test"
+
+# =============================================================================
+# BACKWARD COMPATIBILITY TESTS
+# =============================================================================
+
+- name: test-backward-compat-c-flag
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* -c "echo backward compatibility"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "backward compatibility"
+
+- name: test-backward-compat-m-flag
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* -c "sh -c 'exit 1'" -m 2
+    assertions:
+    - result.code ShouldEqual 1
+
+- name: test-mixed-old-new-flags
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* -c "echo mixed flags" --max-tries 1
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "mixed flags"
+
+# =============================================================================
+# ENVIRONMENT VARIABLE TESTS
+# =============================================================================
+
+- name: test-env-max-tries
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      RETRY_MAX_TRIES=2 go run cmd/* "sh -c 'exit 1'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "msg=Try:"
+    - result.systemerr ShouldContainSubstring "retry failed"
+
+- name: test-flag-overrides-env
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      RETRY_MAX_TRIES=5 go run cmd/* --max-tries 1 "echo flag wins"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "flag wins"
+
+- name: test-both-env-vars
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      RETRY_MAX_TRIES=1 RETRY_DELAY=100ms go run cmd/* "echo env vars work"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "env vars work"
+
+# =============================================================================
+# RETRY BEHAVIOR TESTS
+# =============================================================================
+
+- name: test-successful-command-single-attempt
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* "echo success"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-failing-command-exhausts-retries
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --max-tries 3 "sh -c 'exit 42'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "msg=Try:"
+    - result.systemerr ShouldContainSubstring "retry failed"
+
+- name: test-zero-max-tries-infinite
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      timeout 2s go run cmd/* --max-tries 0 --delay 500ms "sh -c 'exit 1'" || true
+    assertions:
+    - result.systemout ShouldContainSubstring "msg=Try:"
+
+# =============================================================================
+# ERROR HANDLING & EDGE CASES
+# =============================================================================
+
+- name: test-missing-command-shows-usage
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/*
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "command is required"
+    - result.systemerr ShouldContainSubstring "Usage:"
+    - result.systemerr ShouldContainSubstring "Examples:"
+
+- name: test-invalid-delay-format
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --delay "invalid" "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "invalid delay format"
+    - result.systemerr ShouldNotContainSubstring "Usage:"
+
+- name: test-retry-failure-no-usage
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --max-tries 1 "sh -c 'exit 1'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "retry failed"
+    - result.systemerr ShouldNotContainSubstring "Usage:"
+
+- name: test-command-with-spaces
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* "echo 'hello world with spaces'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "hello world with spaces"
+
+- name: test-empty-command-string
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* ""
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "command is required"
+
+# =============================================================================
+# OUTPUT & LOGGING TESTS
+# =============================================================================
+
+- name: test-log-format-structure
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* "echo log test"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "time="
+    - result.systemout ShouldContainSubstring "level=INFO"
+    - result.systemout ShouldContainSubstring "msg=Try:"
+
+- name: test-return-code-logging
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --max-tries 1 "sh -c 'exit 5'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "level=ERROR"
+    - result.systemout ShouldContainSubstring "msg=End"
+    - result.systemout ShouldContainSubstring "return code"
+
+- name: test-success-vs-failure-logging
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* "sh -c 'exit 0'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "level=INFO msg=End"
+    - result.systemout ShouldContainSubstring "return code"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+# =============================================================================
+# INTEGRATION TESTS
+# =============================================================================
+
+- name: test-real-failing-ls
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --max-tries 2 "ls /nonexistent/path/12345"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "msg=Try:"
+    - result.systemerr ShouldContainSubstring "No such file or directory"
+
+- name: test-real-succeeding-commands
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* "ls /tmp"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-complex-command-pipeline
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* 'echo "hello world" | grep world | wc -l'
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "1"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
