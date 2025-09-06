@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/go-andiamo/splitter"
 )
@@ -24,9 +25,9 @@ var (
 // Retry is a struct that represents a retry mechanism for executing commands.
 type Retry struct {
 	cmd       string
-	sleep     func()
 	tries     int
 	condition ConditionRetryer
+	backoff   BackoffStrategy
 }
 
 // ConditionRetryer is an interface that defines the methods required for a retry condition.
@@ -41,7 +42,6 @@ type ConditionRetryer interface {
 func NewRetry(cmd string, condition ConditionRetryer) (*Retry, error) {
 	r := &Retry{
 		cmd:       cmd,
-		sleep:     nil,
 		condition: condition,
 	}
 	if r.condition == nil {
@@ -50,9 +50,9 @@ func NewRetry(cmd string, condition ConditionRetryer) (*Retry, error) {
 	return r, nil
 }
 
-// SetSleep sets the sleep function to be used between retries.
-func (r *Retry) SetSleep(sleep func()) {
-	r.sleep = sleep
+// SetBackoffStrategy sets the backoff strategy to be used between retries.
+func (r *Retry) SetBackoffStrategy(backoff BackoffStrategy) {
+	r.backoff = backoff
 }
 
 // Run executes the command with retries based on the condition.
@@ -67,9 +67,7 @@ func (r *Retry) Run(logger *slog.Logger) error {
 			logger.Info("Command executed successfully")
 			break
 		}
-		if r.sleep != nil {
-			r.sleep()
-		}
+		r.performBackoff()
 	}
 
 	return r.getFinalError(err)
@@ -111,6 +109,16 @@ func (r *Retry) getFinalError(err error) error {
 		return ErrMaxTriesReached
 	}
 	return err
+}
+
+// performBackoff handles the delay between retries using the configured strategy.
+func (r *Retry) performBackoff() {
+	if r.backoff != nil {
+		delay := r.backoff.NextDelay(r.tries)
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+	}
 }
 
 func execCommand(ctx context.Context, cmd string) (int, error) {

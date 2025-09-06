@@ -5,25 +5,72 @@
 
 # retry
 
-retry command will execute X times a failed command until it's successful. Interesting for flakky tests for example or to wait after something.
+retry command will execute X times a failed command until it's successful. Supports both fixed delays and exponential backoff strategies. Useful for flaky tests, waiting for services to become available, or handling transient failures.
+
+## Features
+
+- **Fixed delay**: Traditional constant delay between retries
+- **Exponential backoff**: Smart retry strategy that increases delays exponentially
+- **Configurable**: Customize retry count, delays, multipliers, and maximum delays
+- **Backward compatible**: Existing scripts continue to work unchanged
+- **Environment variables**: Configure via environment variables
 
 # Getting started
 
-Usage is quite simple :
+## Basic Usage
+
+```bash
+# Basic retry with default settings (3 attempts, fixed delay)
+retry "flaky-command"
+
+# Custom retry count and fixed delay
+retry --max-tries 5 --delay 2s "curl https://api.example.com"
+
+# Exponential backoff (recommended for network operations)
+retry --backoff exponential --base-delay 1s --max-delay 30s "curl https://api.example.com"
+```
+
+## Exponential Backoff Examples
+
+```bash
+# Basic exponential backoff (1s, 2s, 4s, 8s, ...)
+retry --backoff exponential "make test"
+
+# Custom exponential backoff with shorter delays  
+retry --backoff exp --base-delay 100ms --multiplier 1.5 --max-delay 10s "flaky-service-check"
+
+# Short form flags
+retry -B exp -b 500ms -M 1m -t 10 "network-dependent-command"
+```
+
+## All Available Options
 
 ```
-$ ./retry -h
-Usage of retry:
-  -c string
-        command to execute
-  -h    print help
-  -m uint
-        max tries of execution of failed command (default 3)
-  -s uint
-        sleep time in seconds between each try
-  -version
-        print version
+$ ./retry --help
+Usage:
+  retry [flags] "command"
+
+Flags:
+  -B, --backoff string      backoff strategy (fixed, exponential) (default "fixed")
+  -b, --base-delay string   base delay for exponential backoff (default "1s")
+  -d, --delay string        delay between retries (e.g., 1s, 500ms, 2m) (default "0s")
+  -h, --help                help for retry
+  -M, --max-delay string    maximum delay for exponential backoff (default "5m")
+  -t, --max-tries uint      maximum number of retry attempts (0 for infinite) (default 3)
+      --multiplier float    multiplier for exponential backoff (default 2)
+  -v, --verbose             enable verbose output
 ```
+
+## Environment Variables
+
+```bash
+export RETRY_MAX_TRIES=5
+export RETRY_BACKOFF=exponential  
+export RETRY_BASE_DELAY=500ms
+export RETRY_MAX_DELAY=30s
+retry "your-command"
+```
+
 
 Demo:
 
