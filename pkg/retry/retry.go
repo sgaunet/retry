@@ -59,26 +59,10 @@ func (r *Retry) SetSleep(sleep func()) {
 // It returns an error if the command fails or if the maximum number of tries is reached.
 // It also logs the output of the command to the provided logger.
 func (r *Retry) Run(logger *slog.Logger) error {
-	var (
-		err error
-	)
-	for r.condition.GetCtx().Err() == nil && !r.condition.IsLimitReached() {
-		if r.condition != nil {
-			r.condition.StartTry()
-		}
-		r.tries++
-		logger.Info("Try:", slog.Int("attempt n°", r.tries))
-		var rc int
-		rc, err = execCommand(r.condition.GetCtx(), r.cmd)
-		if rc == 0 {
-			logger.Info("End", slog.Int("return code", rc))
-		} else {
-			logger.Error("End", slog.Int("return code", rc))
-		}
+	var err error
 
-		if r.condition != nil {
-			r.condition.EndTry()
-		}
+	for r.shouldContinue() {
+		err = r.executeSingleTry(logger)
 		if err == nil {
 			logger.Info("Command executed successfully")
 			break
@@ -87,10 +71,44 @@ func (r *Retry) Run(logger *slog.Logger) error {
 			r.sleep()
 		}
 	}
+
+	return r.getFinalError(err)
+}
+
+// shouldContinue checks if the retry loop should continue.
+func (r *Retry) shouldContinue() bool {
+	return r.condition.GetCtx().Err() == nil && !r.condition.IsLimitReached()
+}
+
+// executeSingleTry executes a single retry attempt.
+func (r *Retry) executeSingleTry(logger *slog.Logger) error {
+	if r.condition != nil {
+		r.condition.StartTry()
+	}
+	r.tries++
+	logger.Info("Try:", slog.Int("attempt n°", r.tries))
+	
+	rc, err := execCommand(r.condition.GetCtx(), r.cmd)
+	if rc == 0 {
+		logger.Info("End", slog.Int("return code", rc))
+	} else {
+		logger.Error("End", slog.Int("return code", rc))
+	}
+
+	if r.condition != nil {
+		r.condition.EndTry()
+	}
+	
+	return err
+}
+
+// getFinalError determines the final error to return.
+func (r *Retry) getFinalError(err error) error {
 	if r.condition.GetCtx().Err() != nil {
-		err = r.condition.GetCtx().Err()
-	} else if r.condition.IsLimitReached() && err != nil {
-		err = ErrMaxTriesReached
+		return fmt.Errorf("context error: %w", r.condition.GetCtx().Err())
+	}
+	if r.condition.IsLimitReached() && err != nil {
+		return ErrMaxTriesReached
 	}
 	return err
 }
