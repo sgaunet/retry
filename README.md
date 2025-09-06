@@ -2,6 +2,11 @@
 ![GitHub Downloads](https://img.shields.io/github/downloads/sgaunet/retry/total)
 ![GitHub Release](https://img.shields.io/github/v/release/sgaunet/retry)
 ![Test Coverage](https://raw.githubusercontent.com/wiki/sgaunet/retry/coverage-badge.svg)
+[![Linter](https://github.com/sgaunet/retry/actions/workflows/linter.yml/badge.svg)](https://github.com/sgaunet/retry/actions/workflows/linter.yml)
+[![Vulnerability Scan](https://github.com/sgaunet/retry/actions/workflows/vulnerability-scan.yml/badge.svg)](https://github.com/sgaunet/retry/actions/workflows/vulnerability-scan.yml)
+[![Generate coverage badges](https://github.com/sgaunet/retry/actions/workflows/coverage.yml/badge.svg)](https://github.com/sgaunet/retry/actions/workflows/coverage.yml)
+[![Snapshot](https://github.com/sgaunet/retry/actions/workflows/snapshot.yml/badge.svg)](https://github.com/sgaunet/retry/actions/workflows/snapshot.yml)
+[![Release](https://github.com/sgaunet/retry/actions/workflows/release.yml/badge.svg)](https://github.com/sgaunet/retry/actions/workflows/release.yml)
 
 # retry
 
