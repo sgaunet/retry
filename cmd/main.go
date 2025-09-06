@@ -136,6 +136,24 @@ func runRetry(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	// Get command
+	commandStr, err := getCommand(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Parse configuration
+	finalMaxTries := parseMaxTries(cmd)
+	sleepDuration, err := parseDelay(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Create and run retry
+	return createAndRunRetry(commandStr, finalMaxTries, sleepDuration, logger)
+}
+
+func getCommand(cmd *cobra.Command) (string, error) {
 	// Get command from -c flag if positional argument not provided
 	if command == "" {
 		if c, _ := cmd.Flags().GetString("command"); c != "" {
@@ -144,12 +162,16 @@ func runRetry(cmd *cobra.Command, _ []string) error {
 	}
 
 	if command == "" {
-		return ErrCommandEmpty
+		return "", ErrCommandEmpty
 	}
 
-	// Handle backward compatibility for max tries
+	return command, nil
+}
+
+func parseMaxTries(cmd *cobra.Command) uint {
 	finalMaxTries := maxTries
 
+	// Handle backward compatibility for max tries
 	if cmd.Flags().Changed("m") {
 		if m, _ := cmd.Flags().GetUint("m"); m != 0 {
 			finalMaxTries = m
@@ -163,8 +185,10 @@ func runRetry(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Handle delay parsing
-	var sleepDuration time.Duration
+	return finalMaxTries
+}
+
+func parseDelay(cmd *cobra.Command) (time.Duration, error) {
 	finalDelay := delay
 
 	// Handle backward compatibility for sleep time
@@ -182,16 +206,21 @@ func runRetry(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Parse delay duration
+	var sleepDuration time.Duration
 	if finalDelay != "0s" && finalDelay != "" {
 		var err error
 		sleepDuration, err = time.ParseDuration(finalDelay)
 		if err != nil {
-			return fmt.Errorf("invalid delay format: %w", err)
+			return 0, fmt.Errorf("invalid delay format: %w", err)
 		}
 	}
 
+	return sleepDuration, nil
+}
+
+func createAndRunRetry(commandStr string, finalMaxTries uint, sleepDuration time.Duration, logger *slog.Logger) error {
 	// Create retry instance
-	r, err := retry.NewRetry(command, retry.NewStopOnMaxTries(finalMaxTries))
+	r, err := retry.NewRetry(commandStr, retry.NewStopOnMaxTries(finalMaxTries))
 	if err != nil {
 		return fmt.Errorf("failed to create retry instance: %w", err)
 	}
@@ -221,7 +250,7 @@ func main() {
 		if errors.Is(err, ErrCommandRequired) || errors.Is(err, ErrCommandEmpty) {
 			fmt.Fprintln(os.Stderr, err)
 			fmt.Fprintln(os.Stderr, "")
-			rootCmd.Usage()
+			_ = rootCmd.Usage()
 		} else {
 			fmt.Fprintln(os.Stderr, err)
 		}
