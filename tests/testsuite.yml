@@ -8,16 +8,6 @@ testcases:
 # VERSION & HELP TESTS
 # =============================================================================
 
-- name: test-version-long-flag
-  steps:
-  - type: exec
-    script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --version
-    assertions:
-    - result.code ShouldEqual 0
-    - result.systemout ShouldEqual "dev"
-
 - name: test-version-subcommand
   steps:
   - type: exec
@@ -86,39 +76,6 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "duration test"
-
-# =============================================================================
-# BACKWARD COMPATIBILITY TESTS
-# =============================================================================
-
-- name: test-backward-compat-c-flag
-  steps:
-  - type: exec
-    script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* -c "echo backward compatibility"
-    assertions:
-    - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "backward compatibility"
-
-- name: test-backward-compat-m-flag
-  steps:
-  - type: exec
-    script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* -c "sh -c 'exit 1'" -m 2
-    assertions:
-    - result.code ShouldEqual 1
-
-- name: test-mixed-old-new-flags
-  steps:
-  - type: exec
-    script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* -c "echo mixed flags" --max-tries 1
-    assertions:
-    - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "mixed flags"
 
 # =============================================================================
 # ENVIRONMENT VARIABLE TESTS
@@ -322,3 +279,112 @@ testcases:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "1"
     - result.systemout ShouldContainSubstring "Command executed successfully"
+
+# =============================================================================
+# EXPONENTIAL BACKOFF TESTS
+# =============================================================================
+
+- name: test-exponential-backoff-basic
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff exponential --base-delay 10ms --max-tries 3 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemerr ShouldContainSubstring "max tries reached"
+
+- name: test-exponential-backoff-short-flag
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff exp -b 5ms -M 100ms --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemerr ShouldContainSubstring "retry failed"
+
+- name: test-exponential-backoff-custom-multiplier
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff exponential --base-delay 1ms --multiplier 1.5 --max-tries 3 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-fixed-backoff-default
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --delay 10ms --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemerr ShouldContainSubstring "retry failed"
+
+- name: test-fixed-backoff-explicit
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff fixed --delay 5ms --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-exponential-backoff-success
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff exponential --base-delay 1ms "echo success"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "success"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-exponential-backoff-invalid-multiplier
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff exponential --multiplier 0.5 "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "multiplier must be greater than 1.0"
+
+- name: test-exponential-backoff-invalid-base-delay
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff exponential --base-delay "invalid" "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "invalid base-delay format"
+
+- name: test-exponential-backoff-invalid-max-delay
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff exponential --max-delay "invalid" "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "invalid max-delay format"
+
+- name: test-unsupported-backoff-strategy
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff linear "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "unsupported backoff strategy"
+

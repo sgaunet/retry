@@ -11,7 +11,7 @@
           "mode": "auto",
           "program": "cmd/",
           "env": {},
-          "args": [ "-c" ,"ls -l /sdf" ]
+          "args": [ "ls -l /sdf" ]
       },
   ]
 }

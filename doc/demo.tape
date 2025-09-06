@@ -60,7 +60,7 @@ Sleep 3000ms
 Type "# The script will exit 0 if the random number is 1"
 Enter
 Sleep 6000ms
-Type "retry -m 10 -c 'bash demo.sh'"
+Type "retry --max-tries 10 'bash demo.sh'"
 Enter
 Sleep 5000ms
 Type "# END"

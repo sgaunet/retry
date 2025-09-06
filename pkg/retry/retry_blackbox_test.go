@@ -31,17 +31,15 @@ func TestRetryWithSleep(t *testing.T) {
 	if err != nil {
 		t.Errorf("Expected no error")
 	}
-	r.SetSleep(func() {
-		time.Sleep(1 * time.Second)
-	})
+	r.SetBackoffStrategy(retry.NewFixedBackoff(1 * time.Second))
 	startTime := time.Now()
 	err = r.Run(nologger)
 	endTime := time.Now()
 	if err == nil {
 		t.Errorf("Expected error")
 	}
-	if endTime.Sub(startTime) < 3*time.Second {
-		t.Errorf("Expected at least 3 seconds, got %v", endTime.Sub(startTime))
+	if endTime.Sub(startTime) < 2*time.Second {
+		t.Errorf("Expected at least 2 seconds, got %v", endTime.Sub(startTime))
 	}
 }
 

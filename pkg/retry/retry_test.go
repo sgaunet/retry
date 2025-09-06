@@ -7,14 +7,15 @@ import (
 	"go.uber.org/goleak"
 )
 
-func Test_retry_SetSleep(t *testing.T) {
+func Test_retry_SetBackoffStrategy(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	r, err := NewRetry("", NewStopOnMaxTries(3))
 	if err != nil {
 		t.Errorf("Expected no error")
 	}
-	r.SetSleep(func() { time.Sleep(5 * time.Second) })
-	if r.sleep == nil {
-		t.Errorf("Expected sleep function to be set")
+	strategy := NewFixedBackoff(5 * time.Second)
+	r.SetBackoffStrategy(strategy)
+	if r.backoff == nil {
+		t.Errorf("Expected backoff strategy to be set")
 	}
 }

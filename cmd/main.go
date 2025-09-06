@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"os"
 	"strings"
 	"time"
@@ -16,23 +15,28 @@ import (
 )
 
 const (
-	defaultMaxTries = 3
+	defaultMaxTries    = 3
+	defaultMultiplier  = 2.0
 )
 
 var (
 	version = "dev"
 	
 	// Error definitions.
-	ErrCommandRequired    = errors.New("command is required as a positional argument or via -c flag")
-	ErrCommandEmpty       = errors.New("command is required")
-	ErrDelayTooLarge      = errors.New("delay time too large")
+	ErrCommandRequired       = errors.New("command is required as a positional argument")
+	ErrCommandEmpty          = errors.New("command is required")
+	ErrInvalidMultiplier     = errors.New("multiplier must be greater than 1.0")
+	ErrUnsupportedBackoff    = errors.New("unsupported backoff strategy (supported: fixed, exponential)")
 )
 
 var (
-	maxTries uint
-	delay    string
-	verbose  bool
-	command  string
+	maxTries    uint
+	delay       string
+	verbose     bool
+	backoff     string
+	baseDelay   string
+	maxDelay    string
+	multiplier  float64
 )
 
 var rootCmd = &cobra.Command{
@@ -58,22 +62,11 @@ if it contains spaces or special characters.`,
   export RETRY_DELAY=1s
   retry "command-that-might-fail"
 
-  # Backward compatibility (still supported)
-  retry -c "old-style-command" -m 3 -s 2`,
-	Args: func(cmd *cobra.Command, args []string) error {
-		// Handle backward compatibility for --version flag
-		if cmd.Flags().Changed("version") {
-			return nil
-		}
-
+  # Exponential backoff examples
+  retry --backoff exponential --base-delay 1s "flaky-command"`,
+	Args: func(_ *cobra.Command, args []string) error {
 		// Check if command is provided as positional argument
 		if len(args) > 0 {
-			command = strings.Join(args, " ")
-			return nil
-		}
-
-		// Check if command is provided via -c flag (backward compatibility)
-		if cmd.Flags().Changed("command") {
 			return nil
 		}
 
@@ -101,18 +94,13 @@ func init() {
 		"maximum number of retry attempts (0 for infinite)")
 	rootCmd.Flags().StringVarP(&delay, "delay", "d", "0s", "delay between retries (e.g., 1s, 500ms, 2m)")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose output")
+	
+	// Backoff strategy flags
+	rootCmd.Flags().StringVarP(&backoff, "backoff", "B", "fixed", "backoff strategy (fixed, exponential)")
+	rootCmd.Flags().StringVarP(&baseDelay, "base-delay", "b", "1s", "base delay for exponential backoff")
+	rootCmd.Flags().StringVarP(&maxDelay, "max-delay", "M", "5m", "maximum delay for exponential backoff")
+	rootCmd.Flags().Float64Var(&multiplier, "multiplier", defaultMultiplier, "multiplier for exponential backoff")
 
-	// Backward compatibility flags (hidden)
-	rootCmd.Flags().UintP("m", "m", defaultMaxTries, "max tries (deprecated, use --max-tries)")
-	rootCmd.Flags().UintP("s", "s", 0, "sleep time in seconds (deprecated, use --delay)")
-	rootCmd.Flags().StringP("command", "c", "", "command to execute (deprecated, use positional argument)")
-	rootCmd.Flags().Bool("version", false, "print version (deprecated, use version subcommand)")
-
-	// Hide deprecated flags
-	_ = rootCmd.Flags().MarkHidden("m")
-	_ = rootCmd.Flags().MarkHidden("s")
-	_ = rootCmd.Flags().MarkHidden("command")
-	_ = rootCmd.Flags().MarkHidden("version")
 
 	// Bind environment variables
 	viper.SetEnvPrefix("RETRY")
@@ -123,63 +111,39 @@ func init() {
 	_ = viper.BindPFlag("max-tries", rootCmd.Flags().Lookup("max-tries"))
 	_ = viper.BindPFlag("delay", rootCmd.Flags().Lookup("delay"))
 	_ = viper.BindPFlag("verbose", rootCmd.Flags().Lookup("verbose"))
+	_ = viper.BindPFlag("backoff", rootCmd.Flags().Lookup("backoff"))
+	_ = viper.BindPFlag("base-delay", rootCmd.Flags().Lookup("base-delay"))
+	_ = viper.BindPFlag("max-delay", rootCmd.Flags().Lookup("max-delay"))
+	_ = viper.BindPFlag("multiplier", rootCmd.Flags().Lookup("multiplier"))
 }
 
-func runRetry(cmd *cobra.Command, _ []string) error {
+func runRetry(cmd *cobra.Command, args []string) error {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 
-	// Handle backward compatibility
-	if cmd.Flags().Changed("version") {
-		fmt.Println(version)
-		return nil
-	}
-
-	// Get command
-	commandStr, err := getCommand(cmd)
-	if err != nil {
-		return err
+	// Get command from positional arguments
+	commandStr := strings.Join(args, " ")
+	if commandStr == "" {
+		return ErrCommandEmpty
 	}
 
 	// Parse configuration
 	finalMaxTries := parseMaxTries(cmd)
-	sleepDuration, err := parseDelay(cmd)
+	backoffStrategy, err := parseBackoffStrategy(cmd)
 	if err != nil {
 		return err
 	}
 
 	// Create and run retry
-	return createAndRunRetry(commandStr, finalMaxTries, sleepDuration, logger)
-}
-
-func getCommand(cmd *cobra.Command) (string, error) {
-	// Get command from -c flag if positional argument not provided
-	if command == "" {
-		if c, _ := cmd.Flags().GetString("command"); c != "" {
-			command = c
-		}
-	}
-
-	if command == "" {
-		return "", ErrCommandEmpty
-	}
-
-	return command, nil
+	return createAndRunRetry(commandStr, finalMaxTries, backoffStrategy, logger)
 }
 
 func parseMaxTries(cmd *cobra.Command) uint {
 	finalMaxTries := maxTries
 
-	// Handle backward compatibility for max tries
-	if cmd.Flags().Changed("m") {
-		if m, _ := cmd.Flags().GetUint("m"); m != 0 {
-			finalMaxTries = m
-		}
-	}
-
 	// Use environment variable if flag not explicitly set
-	if !cmd.Flags().Changed("max-tries") && !cmd.Flags().Changed("m") {
+	if !cmd.Flags().Changed("max-tries") {
 		if envMaxTries := viper.GetUint("max-tries"); envMaxTries != 0 {
 			finalMaxTries = envMaxTries
 		}
@@ -191,15 +155,8 @@ func parseMaxTries(cmd *cobra.Command) uint {
 func parseDelay(cmd *cobra.Command) (time.Duration, error) {
 	finalDelay := delay
 
-	// Handle backward compatibility for sleep time
-	if cmd.Flags().Changed("s") {
-		if s, _ := cmd.Flags().GetUint("s"); s != 0 {
-			finalDelay = fmt.Sprintf("%ds", s)
-		}
-	}
-
 	// Use environment variable if flag not explicitly set
-	if !cmd.Flags().Changed("delay") && !cmd.Flags().Changed("s") {
+	if !cmd.Flags().Changed("delay") {
 		if envDelay := viper.GetString("delay"); envDelay != "" {
 			finalDelay = envDelay
 		}
@@ -218,21 +175,113 @@ func parseDelay(cmd *cobra.Command) (time.Duration, error) {
 	return sleepDuration, nil
 }
 
-func createAndRunRetry(commandStr string, finalMaxTries uint, sleepDuration time.Duration, logger *slog.Logger) error {
+func parseBackoffStrategy(cmd *cobra.Command) (retry.BackoffStrategy, error) {
+	backoffType := getBackoffType(cmd)
+
+	switch backoffType {
+	case "fixed":
+		return parseFixedBackoff(cmd)
+	case "exponential", "exp":
+		return parseExponentialBackoff(cmd)
+	default:
+		return nil, fmt.Errorf("%w: %s", ErrUnsupportedBackoff, backoffType)
+	}
+}
+
+func getBackoffType(cmd *cobra.Command) string {
+	backoffType := backoff
+	if !cmd.Flags().Changed("backoff") {
+		if envBackoff := viper.GetString("backoff"); envBackoff != "" {
+			backoffType = envBackoff
+		}
+	}
+	return backoffType
+}
+
+func parseFixedBackoff(cmd *cobra.Command) (retry.BackoffStrategy, error) {
+	sleepDuration, err := parseDelay(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse delay for fixed backoff: %w", err)
+	}
+	return retry.NewFixedBackoff(sleepDuration), nil
+}
+
+func parseExponentialBackoff(cmd *cobra.Command) (retry.BackoffStrategy, error) {
+	baseDuration, err := parseBaseDuration(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	maxDuration, err := parseMaxDuration(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	mult, err := parseMultiplier(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	return retry.NewExponentialBackoff(baseDuration, maxDuration, mult), nil
+}
+
+func parseBaseDuration(cmd *cobra.Command) (time.Duration, error) {
+	baseDel := baseDelay
+	if !cmd.Flags().Changed("base-delay") {
+		if envBaseDelay := viper.GetString("base-delay"); envBaseDelay != "" {
+			baseDel = envBaseDelay
+		}
+	}
+	baseDuration, err := time.ParseDuration(baseDel)
+	if err != nil {
+		return 0, fmt.Errorf("invalid base-delay format: %w", err)
+	}
+	return baseDuration, nil
+}
+
+func parseMaxDuration(cmd *cobra.Command) (time.Duration, error) {
+	maxDel := maxDelay
+	if !cmd.Flags().Changed("max-delay") {
+		if envMaxDelay := viper.GetString("max-delay"); envMaxDelay != "" {
+			maxDel = envMaxDelay
+		}
+	}
+	maxDuration, err := time.ParseDuration(maxDel)
+	if err != nil {
+		return 0, fmt.Errorf("invalid max-delay format: %w", err)
+	}
+	return maxDuration, nil
+}
+
+func parseMultiplier(cmd *cobra.Command) (float64, error) {
+	mult := multiplier
+	if !cmd.Flags().Changed("multiplier") {
+		if envMultiplier := viper.GetFloat64("multiplier"); envMultiplier != 0 {
+			mult = envMultiplier
+		}
+	}
+
+	if mult <= 1.0 {
+		return 0, ErrInvalidMultiplier
+	}
+
+	return mult, nil
+}
+
+func createAndRunRetry(
+	commandStr string,
+	finalMaxTries uint,
+	backoffStrategy retry.BackoffStrategy,
+	logger *slog.Logger,
+) error {
 	// Create retry instance
 	r, err := retry.NewRetry(commandStr, retry.NewStopOnMaxTries(finalMaxTries))
 	if err != nil {
 		return fmt.Errorf("failed to create retry instance: %w", err)
 	}
 
-	// Set sleep function
-	if sleepDuration > 0 {
-		if sleepDuration > time.Duration(math.MaxInt64) {
-			return ErrDelayTooLarge
-		}
-
-		r.SetSleep(func() { time.Sleep(sleepDuration) })
-	}
+	// Set backoff strategy
+	r.SetBackoffStrategy(backoffStrategy)
 
 	// Run the retry
 	err = r.Run(logger)
