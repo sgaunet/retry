@@ -130,9 +130,25 @@ func runRetry(cmd *cobra.Command, args []string) error {
 
 	// Parse configuration
 	finalMaxTries := parseMaxTries(cmd)
-	backoffStrategy, err := parseBackoffStrategy(cmd)
-	if err != nil {
-		return err
+	
+	// Parse backoff strategy
+	backoffType := getBackoffType(cmd)
+	var backoffStrategy retry.BackoffStrategy
+	switch backoffType {
+	case "fixed":
+		strategy, err := parseFixedBackoff(cmd)
+		if err != nil {
+			return err
+		}
+		backoffStrategy = strategy
+	case "exponential", "exp":
+		strategy, err := parseExponentialBackoff(cmd)
+		if err != nil {
+			return err
+		}
+		backoffStrategy = strategy
+	default:
+		return fmt.Errorf("%w: %s", ErrUnsupportedBackoff, backoffType)
 	}
 
 	// Create and run retry
@@ -175,18 +191,6 @@ func parseDelay(cmd *cobra.Command) (time.Duration, error) {
 	return sleepDuration, nil
 }
 
-func parseBackoffStrategy(cmd *cobra.Command) (retry.BackoffStrategy, error) {
-	backoffType := getBackoffType(cmd)
-
-	switch backoffType {
-	case "fixed":
-		return parseFixedBackoff(cmd)
-	case "exponential", "exp":
-		return parseExponentialBackoff(cmd)
-	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedBackoff, backoffType)
-	}
-}
 
 func getBackoffType(cmd *cobra.Command) string {
 	backoffType := backoff
@@ -198,7 +202,7 @@ func getBackoffType(cmd *cobra.Command) string {
 	return backoffType
 }
 
-func parseFixedBackoff(cmd *cobra.Command) (retry.BackoffStrategy, error) {
+func parseFixedBackoff(cmd *cobra.Command) (*retry.FixedBackoff, error) {
 	sleepDuration, err := parseDelay(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse delay for fixed backoff: %w", err)
@@ -206,7 +210,7 @@ func parseFixedBackoff(cmd *cobra.Command) (retry.BackoffStrategy, error) {
 	return retry.NewFixedBackoff(sleepDuration), nil
 }
 
-func parseExponentialBackoff(cmd *cobra.Command) (retry.BackoffStrategy, error) {
+func parseExponentialBackoff(cmd *cobra.Command) (*retry.ExponentialBackoff, error) {
 	baseDuration, err := parseBaseDuration(cmd)
 	if err != nil {
 		return nil, err
