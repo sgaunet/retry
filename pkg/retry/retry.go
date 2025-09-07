@@ -21,6 +21,13 @@ var (
 	ErrConditionNil = errors.New("condition is nil")
 	// ErrMaxTriesReached is returned when the maximum number of tries is reached.
 	ErrMaxTriesReached = errors.New("max tries reached")
+	// ErrEmptyCommand is returned when the command is empty.
+	ErrEmptyCommand = errors.New("empty command")
+)
+
+const (
+	// outputStreams represents the number of output streams (stdout and stderr).
+	outputStreams = 2
 )
 
 // Retry is a struct that represents a retry mechanism for executing commands.
@@ -60,56 +67,19 @@ func (r *Retry) SetBackoffStrategy(backoff BackoffStrategy) {
 // Run executes the command with retries based on the condition.
 // It returns an error if the command fails or if the maximum number of tries is reached.
 // It also logs the output of the command to the provided logger.
-func (r *Retry) Run(logger *slog.Logger) error {
+func (r *Retry) Run(_ *slog.Logger) error {
 	return r.RunWithEnhancedLogger(nil)
 }
 
+
 // RunWithEnhancedLogger executes the command with enhanced logging support.
 func (r *Retry) RunWithEnhancedLogger(logger *Logger) error {
-	var err error
-
-	// Start execution tracking
-	if logger != nil {
-		maxTries := 0
-		if mt, ok := r.condition.(*StopOnMaxTries); ok {
-			maxTries = int(mt.maxTries)
-		}
-		logger.StartExecution(r.cmd, maxTries, "default") // TODO: get actual backoff strategy
-	}
-
-	for r.shouldContinue() {
-		if logger != nil {
-			logger.StartAttempt(r.tries + 1)
-		}
-
-		err = r.executeSingleTryWithLogger(logger)
-		success := err == nil
-
-		if logger != nil {
-			logger.EndAttempt(r.getLastExitCode(), success)
-		}
-
-		if success {
-			break
-		}
-
-		delay := r.performBackoffWithDelay()
-		if logger != nil && delay > 0 {
-			logger.LogRetryDelay(delay)
-		}
-	}
-
-	// Determine failure reason
-	var failureReason string
-	var stopCondition string
-	if r.condition.GetCtx().Err() != nil {
-		failureReason = "context timeout"
-		stopCondition = "timeout"
-	} else if r.condition.IsLimitReached() {
-		failureReason = "max tries reached"
-		stopCondition = "max tries"
-	}
-
+	r.initializeLogging(logger)
+	
+	err := r.executeRetryLoop(logger)
+	
+	failureReason, stopCondition := r.determineFailureReason()
+	
 	if logger != nil {
 		logger.EndExecution(err == nil, failureReason, stopCondition)
 	}
@@ -122,33 +92,6 @@ func (r *Retry) shouldContinue() bool {
 	return r.condition.GetCtx().Err() == nil && !r.condition.IsLimitReached()
 }
 
-// executeSingleTry executes a single retry attempt.
-func (r *Retry) executeSingleTry(logger *slog.Logger) error {
-	if r.condition != nil {
-		r.condition.StartTry()
-	}
-	r.tries++
-	logger.Info("Try:", slog.Int("attempt n°", r.tries))
-	
-	rc, stdout, stderr, err := execCommandWithOutput(r.condition.GetCtx(), r.cmd)
-	if rc == 0 {
-		logger.Info("End", slog.Int("return code", rc))
-	} else {
-		logger.Error("End", slog.Int("return code", rc))
-	}
-
-	// Pass exit code and output to enhanced conditions
-	if enhanced, ok := r.condition.(EnhancedConditionRetryer); ok {
-		enhanced.SetLastExitCode(rc)
-		enhanced.SetLastOutput(stdout, stderr)
-	}
-
-	if r.condition != nil {
-		r.condition.EndTry()
-	}
-	
-	return err
-}
 
 // getFinalError determines the final error to return.
 func (r *Retry) getFinalError(err error) error {
@@ -161,15 +104,6 @@ func (r *Retry) getFinalError(err error) error {
 	return err
 }
 
-// performBackoff handles the delay between retries using the configured strategy.
-func (r *Retry) performBackoff() {
-	if r.backoff != nil {
-		delay := r.backoff.NextDelay(r.tries)
-		if delay > 0 {
-			time.Sleep(delay)
-		}
-	}
-}
 
 // performBackoffWithDelay handles the delay and returns the delay duration.
 func (r *Retry) performBackoffWithDelay() time.Duration {
@@ -212,55 +146,47 @@ func (r *Retry) executeSingleTryWithLogger(logger *Logger) error {
 }
 
 
-func execCommandWithOutput(ctx context.Context, cmd string) (int, string, string, error) {
-	return execCommandWithOutputAndLogger(ctx, cmd, nil)
-}
 
-func execCommandWithOutputAndLogger(ctx context.Context, cmd string, logger *Logger) (int, string, string, error) {
-	var wg sync.WaitGroup
-	nbGoroutines := 2
+// parseCommand splits the command string into executable parts.
+func parseCommand(cmd string) ([]string, error) {
 	commandSplitter, _ := splitter.NewSplitter(' ', splitter.SingleQuotes, splitter.DoubleQuotes)
 	trimmer := splitter.Trim("'\"")
 	splitCmd, _ := commandSplitter.Split(cmd, trimmer)
 	if len(splitCmd) == 0 {
-		return -1, "", "", nil
+		return nil, ErrEmptyCommand
 	}
-	c := exec.CommandContext(ctx, splitCmd[0], splitCmd[1:]...) //nolint:gosec
+	return splitCmd, nil
+}
 
+// setupCommandPipes creates and returns stdout and stderr pipes for the command.
+func setupCommandPipes(c *exec.Cmd) (io.ReadCloser, io.ReadCloser, error) {
 	stderr, err := c.StderrPipe()
 	if err != nil {
-		return -1, "", "", fmt.Errorf("error creating stderr pipe: %w", err)
+		return nil, nil, fmt.Errorf("error creating stderr pipe: %w", err)
 	}
 
 	stdout, err := c.StdoutPipe()
 	if err != nil {
-		return -1, "", "", fmt.Errorf("error creating stdout pipe: %w", err)
+		_ = stderr.Close()
+		return nil, nil, fmt.Errorf("error creating stdout pipe: %w", err)
 	}
 
-	err = c.Start()
-	if err != nil {
-		var exitError *exec.ExitError
-		if errors.As(err, &exitError) {
-			// The command didn't exit successfully, so we can get the exit code
-			return exitError.ExitCode(), "", "", fmt.Errorf("command failed: %w", err)
-		}
-		// The command didn't start at all or exited because of a signal
-		return -1, "", "", fmt.Errorf("command failed: %w", err)
-	}
+	return stdout, stderr, nil
+}
 
-	// Buffers to capture output
+// handleCommandOutput processes command output with optional logging.
+func handleCommandOutput(stdout, stderr io.ReadCloser, logger *Logger, wg *sync.WaitGroup) (string, string) {
 	var stdoutBuf, stderrBuf strings.Builder
-
-	wg.Add(nbGoroutines)
+	
+	wg.Add(outputStreams)
+	
 	go func() {
 		defer wg.Done()
 		if logger != nil {
-			// Use enhanced logging with prefix
 			stdoutWriter := NewPrefixWriter(logger, false)
 			_, _ = io.Copy(io.MultiWriter(&stdoutBuf, stdoutWriter), stdout)
-			stdoutWriter.Flush() // Ensure any buffered output is processed
+			stdoutWriter.Flush()
 		} else {
-			// Fallback to original behavior
 			_, _ = io.Copy(io.MultiWriter(os.Stdout, &stdoutBuf), stdout)
 		}
 	}()
@@ -268,29 +194,130 @@ func execCommandWithOutputAndLogger(ctx context.Context, cmd string, logger *Log
 	go func() {
 		defer wg.Done()
 		if logger != nil {
-			// Use enhanced logging with prefix
 			stderrWriter := NewPrefixWriter(logger, true)
 			_, _ = io.Copy(io.MultiWriter(&stderrBuf, stderrWriter), stderr)
-			stderrWriter.Flush() // Ensure any buffered output is processed
+			stderrWriter.Flush()
 		} else {
-			// Fallback to original behavior
 			_, _ = io.Copy(io.MultiWriter(os.Stderr, &stderrBuf), stderr)
 		}
 	}()
+	
+	return stdoutBuf.String(), stderrBuf.String()
+}
 
-	err = c.Wait()
-	stderr.Close() //nolint:errcheck,gosec
-	stdout.Close() //nolint:errcheck,gosec
+// getExitCode extracts the exit code from a process error.
+func getExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		return exitError.ExitCode()
+	}
+	
+	return -1
+}
+
+func execCommandWithOutputAndLogger(ctx context.Context, cmd string, logger *Logger) (int, string, string, error) {
+	splitCmd, err := parseCommand(cmd)
+	if err != nil {
+		return -1, "", "", err
+	}
+	
+	c := exec.CommandContext(ctx, splitCmd[0], splitCmd[1:]...) //nolint:gosec
+	return executeCommandWithPipes(c, logger)
+}
+
+// executeCommandWithPipes handles command execution with pipes and output processing.
+func executeCommandWithPipes(c *exec.Cmd, logger *Logger) (int, string, string, error) {
+	stdout, stderr, err := setupCommandPipes(c)
+	if err != nil {
+		return -1, "", "", err
+	}
+
+	err = c.Start()
+	if err != nil {
+		return getExitCode(err), "", "", fmt.Errorf("command failed: %w", err)
+	}
+
+	return waitForCommandCompletion(c, stdout, stderr, logger)
+}
+
+// waitForCommandCompletion waits for command to finish and processes output.
+func waitForCommandCompletion(c *exec.Cmd, stdout, stderr io.ReadCloser, logger *Logger) (int, string, string, error) {
+	var wg sync.WaitGroup
+	stdoutStr, stderrStr := handleCommandOutput(stdout, stderr, logger, &wg)
+	
+	err := c.Wait()
+	_ = stderr.Close()
+	_ = stdout.Close()
 	wg.Wait()
 	
+	exitCode := getExitCode(err)
 	if err != nil {
-		var exitError *exec.ExitError
-		if errors.As(err, &exitError) {
-			// The command didn't exit successfully, so we can get the exit code
-			return exitError.ExitCode(), stdoutBuf.String(), stderrBuf.String(), fmt.Errorf("command failed: %w", err)
-		}
-		// The command didn't start at all or exited because of a signal
-		return -1, stdoutBuf.String(), stderrBuf.String(), fmt.Errorf("command failed: %w", err)
+		return exitCode, stdoutStr, stderrStr, fmt.Errorf("command failed: %w", err)
 	}
-	return 0, stdoutBuf.String(), stderrBuf.String(), nil
+	
+	return exitCode, stdoutStr, stderrStr, nil
+}
+
+// initializeLogging initializes logging for the retry execution.
+func (r *Retry) initializeLogging(logger *Logger) {
+	if logger == nil {
+		return
+	}
+	
+	maxTries := 0
+	if mt, ok := r.condition.(*StopOnMaxTries); ok {
+		if mt.maxTries <= ^uint(0)>>1 { // Check if fits in int
+			maxTries = int(mt.maxTries)
+		}
+	}
+	
+	backoffName := "fixed"
+	if r.backoff != nil {
+		backoffName = "configured"
+	}
+	
+	logger.StartExecution(r.cmd, maxTries, backoffName)
+}
+
+// executeRetryLoop runs the main retry loop logic.
+func (r *Retry) executeRetryLoop(logger *Logger) error {
+	var err error
+	
+	for r.shouldContinue() {
+		if logger != nil {
+			logger.StartAttempt(r.tries + 1)
+		}
+
+		err = r.executeSingleTryWithLogger(logger)
+		success := err == nil
+
+		if logger != nil {
+			logger.EndAttempt(r.getLastExitCode(), success)
+		}
+
+		if success {
+			break
+		}
+
+		delay := r.performBackoffWithDelay()
+		if logger != nil && delay > 0 {
+			logger.LogRetryDelay(delay)
+		}
+	}
+	
+	return err
+}
+
+// determineFailureReason determines why the retry execution stopped.
+func (r *Retry) determineFailureReason() (string, string) {
+	if r.condition.GetCtx().Err() != nil {
+		return "context timeout", "timeout"
+	} else if r.condition.IsLimitReached() {
+		return "max tries reached", "max tries"
+	}
+	return "", ""
 }

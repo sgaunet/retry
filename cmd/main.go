@@ -4,7 +4,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -127,17 +126,14 @@ var versionCmd = &cobra.Command{
 	},
 }
 
-func init() {
-	// Add version subcommand
-	rootCmd.AddCommand(versionCmd)
-
-	// Modern flags
+func setupBasicFlags() {
 	rootCmd.Flags().UintVarP(&maxTries, "max-tries", "t", defaultMaxTries,
 		"maximum number of retry attempts (0 for infinite)")
 	rootCmd.Flags().StringVarP(&delay, "delay", "d", "0s", "delay between retries (e.g., 1s, 500ms, 2m)")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose output")
-	
-	// Backoff strategy flags
+}
+
+func setupBackoffFlags() {
 	rootCmd.Flags().StringVarP(&backoff, "backoff", "B", "fixed",
 		"backoff strategy (fixed, exponential, linear, fibonacci, custom)")
 	rootCmd.Flags().StringVarP(&baseDelay, "base-delay", "b", "1s", "base delay for backoff strategies")
@@ -146,8 +142,9 @@ func init() {
 	rootCmd.Flags().StringVar(&increment, "increment", "500ms", "increment for linear backoff")
 	rootCmd.Flags().Float64VarP(&jitter, "jitter", "j", 0.0, "jitter percentage (0.0-1.0) to add randomness")
 	rootCmd.Flags().StringVar(&delays, "delays", "", "comma-separated custom delays (e.g., 1s,2s,5s,10s)")
+}
 
-	// New stop condition flags.
+func setupStopConditionFlags() {
 	rootCmd.Flags().StringVar(&timeout, "timeout", "", "stop after duration (e.g., 5m, 30s)")
 	rootCmd.Flags().StringVar(&stopOnExit, "stop-on-exit", "", "stop on specific exit codes (comma-separated)")
 	rootCmd.Flags().StringVar(&stopWhenContains, "stop-when-contains", "", "stop when output contains pattern")
@@ -155,39 +152,44 @@ func init() {
 		"stop when output doesn't contain pattern")
 	rootCmd.Flags().StringVar(&stopAt, "stop-at", "", "stop at specific time (HH:MM format)")
 	rootCmd.Flags().StringVar(&conditionLogic, "condition-logic", "OR", "logic for multiple conditions (AND or OR)")
-	
-	// Output control flags.
+}
+
+func setupOutputFlags() {
 	rootCmd.Flags().BoolVar(&quietRetries, "quiet-retries", false, "only show command output on final attempt")
 	rootCmd.Flags().BoolVar(&noColor, "no-color", false, "disable colored output")
 	rootCmd.Flags().BoolVar(&summaryOnly, "summary-only", false, "only show final summary")
 	rootCmd.Flags().BoolVarP(&verboseOutput, "verbose-output", "V", false, "show detailed timing and condition info")
+}
 
-	// Bind environment variables
+func setupEnvironmentBindings() {
 	viper.SetEnvPrefix("RETRY")
 	viper.AutomaticEnv()
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+}
 
-	// Bind flags to viper
-	_ = viper.BindPFlag("max-tries", rootCmd.Flags().Lookup("max-tries"))
-	_ = viper.BindPFlag("delay", rootCmd.Flags().Lookup("delay"))
-	_ = viper.BindPFlag("verbose", rootCmd.Flags().Lookup("verbose"))
-	_ = viper.BindPFlag("backoff", rootCmd.Flags().Lookup("backoff"))
-	_ = viper.BindPFlag("base-delay", rootCmd.Flags().Lookup("base-delay"))
-	_ = viper.BindPFlag("max-delay", rootCmd.Flags().Lookup("max-delay"))
-	_ = viper.BindPFlag("multiplier", rootCmd.Flags().Lookup("multiplier"))
-	_ = viper.BindPFlag("increment", rootCmd.Flags().Lookup("increment"))
-	_ = viper.BindPFlag("jitter", rootCmd.Flags().Lookup("jitter"))
-	_ = viper.BindPFlag("delays", rootCmd.Flags().Lookup("delays"))
-	_ = viper.BindPFlag("timeout", rootCmd.Flags().Lookup("timeout"))
-	_ = viper.BindPFlag("stop-on-exit", rootCmd.Flags().Lookup("stop-on-exit"))
-	_ = viper.BindPFlag("stop-when-contains", rootCmd.Flags().Lookup("stop-when-contains"))
-	_ = viper.BindPFlag("stop-when-not-contains", rootCmd.Flags().Lookup("stop-when-not-contains"))
-	_ = viper.BindPFlag("stop-at", rootCmd.Flags().Lookup("stop-at"))
-	_ = viper.BindPFlag("condition-logic", rootCmd.Flags().Lookup("condition-logic"))
-	_ = viper.BindPFlag("quiet-retries", rootCmd.Flags().Lookup("quiet-retries"))
-	_ = viper.BindPFlag("no-color", rootCmd.Flags().Lookup("no-color"))
-	_ = viper.BindPFlag("summary-only", rootCmd.Flags().Lookup("summary-only"))
-	_ = viper.BindPFlag("verbose-output", rootCmd.Flags().Lookup("verbose-output"))
+func bindFlagsToViper() {
+	flags := []string{
+		"max-tries", "delay", "verbose", "backoff", "base-delay", "max-delay",
+		"multiplier", "increment", "jitter", "delays", "timeout", "stop-on-exit",
+		"stop-when-contains", "stop-when-not-contains", "stop-at", "condition-logic",
+		"quiet-retries", "no-color", "summary-only", "verbose-output",
+	}
+	
+	for _, flag := range flags {
+		_ = viper.BindPFlag(flag, rootCmd.Flags().Lookup(flag))
+	}
+}
+
+func init() {
+	rootCmd.AddCommand(versionCmd)
+	
+	setupBasicFlags()
+	setupBackoffFlags()
+	setupStopConditionFlags()
+	setupOutputFlags()
+	
+	setupEnvironmentBindings()
+	bindFlagsToViper()
 }
 
 func runRetry(cmd *cobra.Command, args []string) error {
@@ -325,58 +327,29 @@ func parseMultiplier(cmd *cobra.Command) (float64, error) {
 	return mult, nil
 }
 
-func createAndRunRetryWithStrategy(
-	commandStr string,
-	finalMaxTries uint,
-	cmd *cobra.Command,
-	logger *slog.Logger,
-) error {
-	// Build stop conditions
-	condition, err := buildStopConditions(cmd, finalMaxTries)
-	if err != nil {
-		return fmt.Errorf("failed to build stop conditions: %w", err)
-	}
 
-	// Create retry instance
-	r, err := retry.NewRetry(commandStr, condition)
-	if err != nil {
-		return fmt.Errorf("failed to create retry instance: %w", err)
+func determineLogLevel() retry.LogLevel {
+	if summaryOnly {
+		return retry.LogLevelQuiet
+	} else if verboseOutput {
+		return retry.LogLevelVerbose
 	}
-
-	// Build strategy
-	strategy, err := buildStrategy(cmd)
-	if err != nil {
-		return err
-	}
-	
-	// Set backoff strategy and run
-	r.SetBackoffStrategy(strategy)
-	err = r.Run(logger)
-	if err != nil {
-		return fmt.Errorf("retry failed: %w", err)
-	}
-
-	return nil
+	return retry.LogLevelNormal
 }
 
-func createEnhancedLogger(cmd *cobra.Command) *retry.Logger {
-	// Determine log level
-	var level retry.LogLevel = retry.LogLevelNormal
+func determineOutputMode() retry.OutputMode {
 	if summaryOnly {
-		level = retry.LogLevelQuiet
-	} else if verboseOutput {
-		level = retry.LogLevelVerbose
-	}
-	
-	// Determine output mode  
-	var mode retry.OutputMode = retry.OutputModeNormal
-	if summaryOnly {
-		mode = retry.OutputModeSummaryOnly
+		return retry.OutputModeSummaryOnly
 	} else if quietRetries {
-		mode = retry.OutputModeQuietRetries
+		return retry.OutputModeQuietRetries
 	}
+	return retry.OutputModeNormal
+}
+
+func applyEnvironmentOverrides(cmd *cobra.Command) (retry.LogLevel, retry.OutputMode) {
+	level := determineLogLevel()
+	mode := determineOutputMode()
 	
-	// Check for environment variable overrides
 	if !cmd.Flags().Changed("no-color") && viper.GetBool("no-color") {
 		noColor = true
 	}
@@ -394,6 +367,11 @@ func createEnhancedLogger(cmd *cobra.Command) *retry.Logger {
 		level = retry.LogLevelVerbose
 	}
 	
+	return level, mode
+}
+
+func createEnhancedLogger(cmd *cobra.Command) *retry.Logger {
+	level, mode := applyEnvironmentOverrides(cmd)
 	return retry.NewLogger(level, mode, noColor)
 }
 
