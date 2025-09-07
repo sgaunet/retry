@@ -383,8 +383,296 @@ testcases:
   - type: exec
     script: |
       cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff linear "echo test"
+      go run cmd/* --backoff invalid "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "unsupported backoff strategy"
+
+# =============================================================================
+# LINEAR BACKOFF TESTS
+# =============================================================================
+
+- name: test-linear-backoff-basic
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff linear --base-delay 10ms --increment 5ms --max-tries 3 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemerr ShouldContainSubstring "max tries reached"
+
+- name: test-linear-backoff-with-max-delay
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff linear --base-delay 5ms --increment 10ms --max-delay 20ms --max-tries 4 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-linear-backoff-success
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff linear --base-delay 1ms --increment 1ms "echo linear success"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "linear success"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-linear-backoff-invalid-increment
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff linear --increment "invalid" "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "invalid increment format"
+
+# =============================================================================
+# FIBONACCI BACKOFF TESTS
+# =============================================================================
+
+- name: test-fibonacci-backoff-basic
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff fibonacci --base-delay 10ms --max-tries 3 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemerr ShouldContainSubstring "max tries reached"
+
+- name: test-fibonacci-backoff-short-flag
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff fib -b 5ms -M 100ms --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-fibonacci-backoff-with-max-delay
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff fibonacci --base-delay 10ms --max-delay 50ms --max-tries 6 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    # Should see attempts but delays capped at max
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-fibonacci-backoff-success
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff fibonacci --base-delay 1ms "echo fib success"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "fib success"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+# =============================================================================
+# CUSTOM BACKOFF TESTS
+# =============================================================================
+
+- name: test-custom-backoff-basic
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff custom --delays "10ms,20ms,50ms" --max-tries 3 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemerr ShouldContainSubstring "max tries reached"
+
+- name: test-custom-backoff-single-delay
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff custom --delays "15ms" --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-custom-backoff-complex-sequence
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff custom --delays "100ms,200ms,500ms,1s,2s" --max-tries 4 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-custom-backoff-success
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff custom --delays "1ms,2ms,5ms" "echo custom success"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "custom success"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-custom-backoff-empty-delays
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff custom --delays "" "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "delays cannot be empty"
+
+- name: test-custom-backoff-invalid-delay-format
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff custom --delays "1s,invalid,3s" "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "invalid delay format"
+
+- name: test-custom-backoff-with-spaces
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff custom --delays "100ms, 200ms, 500ms" --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    # Should work with spaces around commas
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+# =============================================================================
+# JITTER TESTS
+# =============================================================================
+
+- name: test-jitter-with-exponential
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff exponential --jitter 0.2 --base-delay 10ms --max-tries 3 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-jitter-with-linear
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff linear --jitter 0.5 --base-delay 10ms --increment 5ms --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-jitter-with-fibonacci
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff fibonacci -j 0.1 --base-delay 10ms --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-jitter-with-custom
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff custom --delays "10ms,20ms" --jitter 0.3 --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-jitter-zero-has-no-effect
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff fixed --delay 10ms --jitter 0.0 --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-jitter-max-value
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff fixed --delay 10ms --jitter 1.0 --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-jitter-invalid-negative
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff fixed --jitter -0.5 "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "jitter must be between 0.0 and 1.0"
+
+- name: test-jitter-invalid-too-high
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --backoff fixed --jitter 1.5 "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "jitter must be between 0.0 and 1.0"
+
+# =============================================================================
+# ENVIRONMENT VARIABLE TESTS FOR NEW FLAGS
+# =============================================================================
+
+- name: test-env-increment
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      RETRY_INCREMENT=10ms go run cmd/* --backoff linear --base-delay 5ms --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-env-jitter
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      RETRY_JITTER=0.25 go run cmd/* --backoff fixed --delay 10ms --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-env-delays
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      RETRY_DELAYS="5ms,10ms,20ms" go run cmd/* --backoff custom --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
 

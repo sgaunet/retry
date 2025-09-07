@@ -26,7 +26,10 @@ var (
 	ErrCommandRequired       = errors.New("command is required as a positional argument")
 	ErrCommandEmpty          = errors.New("command is required")
 	ErrInvalidMultiplier     = errors.New("multiplier must be greater than 1.0")
-	ErrUnsupportedBackoff    = errors.New("unsupported backoff strategy (supported: fixed, exponential)")
+	ErrUnsupportedBackoff = errors.New(
+		"unsupported backoff strategy (supported: fixed, exponential, linear, fibonacci, custom)")
+	ErrInvalidJitter         = errors.New("jitter must be between 0.0 and 1.0")
+	ErrEmptyDelays           = errors.New("delays cannot be empty when using custom backoff")
 )
 
 var (
@@ -37,6 +40,9 @@ var (
 	baseDelay   string
 	maxDelay    string
 	multiplier  float64
+	increment   string
+	jitter      float64
+	delays      string
 )
 
 var rootCmd = &cobra.Command{
@@ -63,7 +69,19 @@ if it contains spaces or special characters.`,
   retry "command-that-might-fail"
 
   # Exponential backoff examples
-  retry --backoff exponential --base-delay 1s "flaky-command"`,
+  retry --backoff exponential --base-delay 1s "flaky-command"
+  
+  # Linear backoff with increment
+  retry --backoff linear --base-delay 1s --increment 500ms "command"
+  
+  # Fibonacci backoff
+  retry --backoff fibonacci --base-delay 1s "command"
+  
+  # Custom delays
+  retry --backoff custom --delays "1s,2s,5s,10s,30s" "command"
+  
+  # With jitter for preventing thundering herd
+  retry --backoff exponential --jitter 0.2 "command"`,
 	Args: func(_ *cobra.Command, args []string) error {
 		// Check if command is provided as positional argument
 		if len(args) > 0 {
@@ -96,10 +114,14 @@ func init() {
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose output")
 	
 	// Backoff strategy flags
-	rootCmd.Flags().StringVarP(&backoff, "backoff", "B", "fixed", "backoff strategy (fixed, exponential)")
-	rootCmd.Flags().StringVarP(&baseDelay, "base-delay", "b", "1s", "base delay for exponential backoff")
-	rootCmd.Flags().StringVarP(&maxDelay, "max-delay", "M", "5m", "maximum delay for exponential backoff")
+	rootCmd.Flags().StringVarP(&backoff, "backoff", "B", "fixed",
+		"backoff strategy (fixed, exponential, linear, fibonacci, custom)")
+	rootCmd.Flags().StringVarP(&baseDelay, "base-delay", "b", "1s", "base delay for backoff strategies")
+	rootCmd.Flags().StringVarP(&maxDelay, "max-delay", "M", "5m", "maximum delay cap for backoff strategies")
 	rootCmd.Flags().Float64Var(&multiplier, "multiplier", defaultMultiplier, "multiplier for exponential backoff")
+	rootCmd.Flags().StringVar(&increment, "increment", "500ms", "increment for linear backoff")
+	rootCmd.Flags().Float64VarP(&jitter, "jitter", "j", 0.0, "jitter percentage (0.0-1.0) to add randomness")
+	rootCmd.Flags().StringVar(&delays, "delays", "", "comma-separated custom delays (e.g., 1s,2s,5s,10s)")
 
 
 	// Bind environment variables
@@ -115,6 +137,9 @@ func init() {
 	_ = viper.BindPFlag("base-delay", rootCmd.Flags().Lookup("base-delay"))
 	_ = viper.BindPFlag("max-delay", rootCmd.Flags().Lookup("max-delay"))
 	_ = viper.BindPFlag("multiplier", rootCmd.Flags().Lookup("multiplier"))
+	_ = viper.BindPFlag("increment", rootCmd.Flags().Lookup("increment"))
+	_ = viper.BindPFlag("jitter", rootCmd.Flags().Lookup("jitter"))
+	_ = viper.BindPFlag("delays", rootCmd.Flags().Lookup("delays"))
 }
 
 func runRetry(cmd *cobra.Command, args []string) error {
@@ -134,21 +159,34 @@ func runRetry(cmd *cobra.Command, args []string) error {
 	// Parse backoff strategy
 	backoffType := getBackoffType(cmd)
 	var backoffStrategy retry.BackoffStrategy
+	var err error
+	
 	switch backoffType {
 	case "fixed":
-		strategy, err := parseFixedBackoff(cmd)
-		if err != nil {
-			return err
-		}
-		backoffStrategy = strategy
+		backoffStrategy, err = parseFixedBackoff(cmd)
 	case "exponential", "exp":
-		strategy, err := parseExponentialBackoff(cmd)
-		if err != nil {
-			return err
-		}
-		backoffStrategy = strategy
+		backoffStrategy, err = parseExponentialBackoff(cmd)
+	case "linear":
+		backoffStrategy, err = parseLinearBackoff(cmd)
+	case "fibonacci", "fib":
+		backoffStrategy, err = parseFibonacciBackoff(cmd)
+	case "custom":
+		backoffStrategy, err = parseCustomBackoff(cmd)
 	default:
 		return fmt.Errorf("%w: %s", ErrUnsupportedBackoff, backoffType)
+	}
+	
+	if err != nil {
+		return err
+	}
+	
+	// Apply jitter if specified
+	jitterWrapper, err := applyJitter(cmd, backoffStrategy)
+	if err != nil {
+		return err
+	}
+	if jitterWrapper != nil {
+		backoffStrategy = jitterWrapper
 	}
 
 	// Create and run retry
@@ -294,6 +332,94 @@ func createAndRunRetry(
 	}
 
 	return nil
+}
+
+func parseLinearBackoff(cmd *cobra.Command) (*retry.LinearBackoff, error) {
+	baseDuration, err := parseBaseDuration(cmd)
+	if err != nil {
+		return nil, err
+	}
+	
+	maxDuration, err := parseMaxDuration(cmd)
+	if err != nil {
+		return nil, err
+	}
+	
+	incr := increment
+	if !cmd.Flags().Changed("increment") {
+		if envIncrement := viper.GetString("increment"); envIncrement != "" {
+			incr = envIncrement
+		}
+	}
+	
+	incrDuration, err := time.ParseDuration(incr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid increment format: %w", err)
+	}
+	
+	return retry.NewLinearBackoff(baseDuration, incrDuration, maxDuration), nil
+}
+
+func parseFibonacciBackoff(cmd *cobra.Command) (*retry.FibonacciBackoff, error) {
+	baseDuration, err := parseBaseDuration(cmd)
+	if err != nil {
+		return nil, err
+	}
+	
+	maxDuration, err := parseMaxDuration(cmd)
+	if err != nil {
+		return nil, err
+	}
+	
+	return retry.NewFibonacciBackoff(baseDuration, maxDuration), nil
+}
+
+func parseCustomBackoff(cmd *cobra.Command) (*retry.CustomBackoff, error) {
+	delayStr := delays
+	if !cmd.Flags().Changed("delays") {
+		if envDelays := viper.GetString("delays"); envDelays != "" {
+			delayStr = envDelays
+		}
+	}
+	
+	if delayStr == "" {
+		return nil, ErrEmptyDelays
+	}
+	
+	// Parse comma-separated delays
+	delayParts := strings.Split(delayStr, ",")
+	parsedDelays := make([]time.Duration, 0, len(delayParts))
+	
+	for _, part := range delayParts {
+		trimmed := strings.TrimSpace(part)
+		duration, err := time.ParseDuration(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("invalid delay format '%s': %w", trimmed, err)
+		}
+		parsedDelays = append(parsedDelays, duration)
+	}
+	
+	return retry.NewCustomBackoff(parsedDelays), nil
+}
+
+func applyJitter(cmd *cobra.Command, strategy retry.BackoffStrategy) (*retry.JitterBackoff, error) {
+	jitterValue := jitter
+	if !cmd.Flags().Changed("jitter") {
+		if envJitter := viper.GetFloat64("jitter"); envJitter != 0 {
+			jitterValue = envJitter
+		}
+	}
+	
+	if jitterValue == 0 {
+		// Return nil to indicate no jitter wrapper needed
+		return nil, nil
+	}
+	
+	if jitterValue < 0 || jitterValue > 1 {
+		return nil, ErrInvalidJitter
+	}
+	
+	return retry.NewJitterBackoff(strategy, jitterValue), nil
 }
 
 func main() {
