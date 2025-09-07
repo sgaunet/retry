@@ -25,10 +25,11 @@ var (
 
 // Retry is a struct that represents a retry mechanism for executing commands.
 type Retry struct {
-	cmd       string
-	tries     int
-	condition ConditionRetryer
-	backoff   BackoffStrategy
+	cmd          string
+	tries        int
+	condition    ConditionRetryer
+	backoff      BackoffStrategy
+	lastExitCode int
 }
 
 // ConditionRetryer is an interface that defines the methods required for a retry condition.
@@ -60,15 +61,57 @@ func (r *Retry) SetBackoffStrategy(backoff BackoffStrategy) {
 // It returns an error if the command fails or if the maximum number of tries is reached.
 // It also logs the output of the command to the provided logger.
 func (r *Retry) Run(logger *slog.Logger) error {
+	return r.RunWithEnhancedLogger(nil)
+}
+
+// RunWithEnhancedLogger executes the command with enhanced logging support.
+func (r *Retry) RunWithEnhancedLogger(logger *Logger) error {
 	var err error
 
+	// Start execution tracking
+	if logger != nil {
+		maxTries := 0
+		if mt, ok := r.condition.(*StopOnMaxTries); ok {
+			maxTries = int(mt.maxTries)
+		}
+		logger.StartExecution(r.cmd, maxTries, "default") // TODO: get actual backoff strategy
+	}
+
 	for r.shouldContinue() {
-		err = r.executeSingleTry(logger)
-		if err == nil {
-			logger.Info("Command executed successfully")
+		if logger != nil {
+			logger.StartAttempt(r.tries + 1)
+		}
+
+		err = r.executeSingleTryWithLogger(logger)
+		success := err == nil
+
+		if logger != nil {
+			logger.EndAttempt(r.getLastExitCode(), success)
+		}
+
+		if success {
 			break
 		}
-		r.performBackoff()
+
+		delay := r.performBackoffWithDelay()
+		if logger != nil && delay > 0 {
+			logger.LogRetryDelay(delay)
+		}
+	}
+
+	// Determine failure reason
+	var failureReason string
+	var stopCondition string
+	if r.condition.GetCtx().Err() != nil {
+		failureReason = "context timeout"
+		stopCondition = "timeout"
+	} else if r.condition.IsLimitReached() {
+		failureReason = "max tries reached"
+		stopCondition = "max tries"
+	}
+
+	if logger != nil {
+		logger.EndExecution(err == nil, failureReason, stopCondition)
 	}
 
 	return r.getFinalError(err)
@@ -128,8 +171,52 @@ func (r *Retry) performBackoff() {
 	}
 }
 
+// performBackoffWithDelay handles the delay and returns the delay duration.
+func (r *Retry) performBackoffWithDelay() time.Duration {
+	if r.backoff != nil {
+		delay := r.backoff.NextDelay(r.tries)
+		if delay > 0 {
+			time.Sleep(delay)
+			return delay
+		}
+	}
+	return 0
+}
+
+// getLastExitCode returns the exit code from the last command execution.
+func (r *Retry) getLastExitCode() int {
+	return r.lastExitCode
+}
+
+// executeSingleTryWithLogger executes a single retry attempt with enhanced logging.
+func (r *Retry) executeSingleTryWithLogger(logger *Logger) error {
+	if r.condition != nil {
+		r.condition.StartTry()
+	}
+	r.tries++
+	
+	rc, stdout, stderr, err := execCommandWithOutputAndLogger(r.condition.GetCtx(), r.cmd, logger)
+	r.lastExitCode = rc
+
+	// Pass exit code and output to enhanced conditions
+	if enhanced, ok := r.condition.(EnhancedConditionRetryer); ok {
+		enhanced.SetLastExitCode(rc)
+		enhanced.SetLastOutput(stdout, stderr)
+	}
+
+	if r.condition != nil {
+		r.condition.EndTry()
+	}
+	
+	return err
+}
+
 
 func execCommandWithOutput(ctx context.Context, cmd string) (int, string, string, error) {
+	return execCommandWithOutputAndLogger(ctx, cmd, nil)
+}
+
+func execCommandWithOutputAndLogger(ctx context.Context, cmd string, logger *Logger) (int, string, string, error) {
 	var wg sync.WaitGroup
 	nbGoroutines := 2
 	commandSplitter, _ := splitter.NewSplitter(' ', splitter.SingleQuotes, splitter.DoubleQuotes)
@@ -167,14 +254,28 @@ func execCommandWithOutput(ctx context.Context, cmd string) (int, string, string
 	wg.Add(nbGoroutines)
 	go func() {
 		defer wg.Done()
-		// Tee to both os.Stdout and buffer
-		_, _ = io.Copy(io.MultiWriter(os.Stdout, &stdoutBuf), stdout)
+		if logger != nil {
+			// Use enhanced logging with prefix
+			stdoutWriter := NewPrefixWriter(logger, false)
+			_, _ = io.Copy(io.MultiWriter(&stdoutBuf, stdoutWriter), stdout)
+			stdoutWriter.Flush() // Ensure any buffered output is processed
+		} else {
+			// Fallback to original behavior
+			_, _ = io.Copy(io.MultiWriter(os.Stdout, &stdoutBuf), stdout)
+		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		// Tee to both os.Stderr and buffer
-		_, _ = io.Copy(io.MultiWriter(os.Stderr, &stderrBuf), stderr)
+		if logger != nil {
+			// Use enhanced logging with prefix
+			stderrWriter := NewPrefixWriter(logger, true)
+			_, _ = io.Copy(io.MultiWriter(&stderrBuf, stderrWriter), stderr)
+			stderrWriter.Flush() // Ensure any buffered output is processed
+		} else {
+			// Fallback to original behavior
+			_, _ = io.Copy(io.MultiWriter(os.Stderr, &stderrBuf), stderr)
+		}
 	}()
 
 	err = c.Wait()
