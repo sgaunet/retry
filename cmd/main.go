@@ -26,6 +26,7 @@ var (
 	ErrCommandRequired       = errors.New("command is required as a positional argument")
 	ErrCommandEmpty          = errors.New("command is required")
 	ErrInvalidMultiplier     = errors.New("multiplier must be greater than 1.0")
+	ErrInvalidConditionLogic = errors.New("must be 'and' or 'or'")
 	ErrUnsupportedBackoff = errors.New(
 		"unsupported backoff strategy (supported: fixed, exponential, linear, fibonacci, custom)")
 	ErrInvalidJitter         = errors.New("jitter must be between 0.0 and 1.0")
@@ -43,6 +44,14 @@ var (
 	increment   string
 	jitter      float64
 	delays      string
+	
+	// New stop condition flags.
+	timeout              string
+	stopOnExit           string
+	stopWhenContains     string
+	stopWhenNotContains  string
+	stopAt               string
+	conditionLogic       string
 )
 
 var rootCmd = &cobra.Command{
@@ -81,7 +90,16 @@ if it contains spaces or special characters.`,
   retry --backoff custom --delays "1s,2s,5s,10s,30s" "command"
   
   # With jitter for preventing thundering herd
-  retry --backoff exponential --jitter 0.2 "command"`,
+  retry --backoff exponential --jitter 0.2 "command"
+  
+  # Multiple stop conditions
+  retry --max-tries 10 --timeout 5m "slow-command"
+  
+  # Stop on specific exit codes
+  retry --stop-on-exit "0,1" "command"
+  
+  # Stop when output contains pattern
+  retry --stop-when-contains "ready" --timeout 30s "service-check"`,
 	Args: func(_ *cobra.Command, args []string) error {
 		// Check if command is provided as positional argument
 		if len(args) > 0 {
@@ -123,6 +141,14 @@ func init() {
 	rootCmd.Flags().Float64VarP(&jitter, "jitter", "j", 0.0, "jitter percentage (0.0-1.0) to add randomness")
 	rootCmd.Flags().StringVar(&delays, "delays", "", "comma-separated custom delays (e.g., 1s,2s,5s,10s)")
 
+	// New stop condition flags.
+	rootCmd.Flags().StringVar(&timeout, "timeout", "", "stop after duration (e.g., 5m, 30s)")
+	rootCmd.Flags().StringVar(&stopOnExit, "stop-on-exit", "", "stop on specific exit codes (comma-separated)")
+	rootCmd.Flags().StringVar(&stopWhenContains, "stop-when-contains", "", "stop when output contains pattern")
+	rootCmd.Flags().StringVar(&stopWhenNotContains, "stop-when-not-contains", "",
+		"stop when output doesn't contain pattern")
+	rootCmd.Flags().StringVar(&stopAt, "stop-at", "", "stop at specific time (HH:MM format)")
+	rootCmd.Flags().StringVar(&conditionLogic, "condition-logic", "OR", "logic for multiple conditions (AND or OR)")
 
 	// Bind environment variables
 	viper.SetEnvPrefix("RETRY")
@@ -140,6 +166,12 @@ func init() {
 	_ = viper.BindPFlag("increment", rootCmd.Flags().Lookup("increment"))
 	_ = viper.BindPFlag("jitter", rootCmd.Flags().Lookup("jitter"))
 	_ = viper.BindPFlag("delays", rootCmd.Flags().Lookup("delays"))
+	_ = viper.BindPFlag("timeout", rootCmd.Flags().Lookup("timeout"))
+	_ = viper.BindPFlag("stop-on-exit", rootCmd.Flags().Lookup("stop-on-exit"))
+	_ = viper.BindPFlag("stop-when-contains", rootCmd.Flags().Lookup("stop-when-contains"))
+	_ = viper.BindPFlag("stop-when-not-contains", rootCmd.Flags().Lookup("stop-when-not-contains"))
+	_ = viper.BindPFlag("stop-at", rootCmd.Flags().Lookup("stop-at"))
+	_ = viper.BindPFlag("condition-logic", rootCmd.Flags().Lookup("condition-logic"))
 }
 
 func runRetry(cmd *cobra.Command, args []string) error {
@@ -284,8 +316,14 @@ func createAndRunRetryWithStrategy(
 	cmd *cobra.Command,
 	logger *slog.Logger,
 ) error {
+	// Build stop conditions
+	condition, err := buildStopConditions(cmd, finalMaxTries)
+	if err != nil {
+		return fmt.Errorf("failed to build stop conditions: %w", err)
+	}
+
 	// Create retry instance
-	r, err := retry.NewRetry(commandStr, retry.NewStopOnMaxTries(finalMaxTries))
+	r, err := retry.NewRetry(commandStr, condition)
 	if err != nil {
 		return fmt.Errorf("failed to create retry instance: %w", err)
 	}
@@ -426,6 +464,199 @@ func getJitterValue(cmd *cobra.Command) float64 {
 	return jitterValue
 }
 
+
+//nolint:ireturn // Factory function needs to return interface
+func buildStopConditions(cmd *cobra.Command, maxTries uint) (retry.ConditionRetryer, error) {
+	conditions, err := collectConditions(cmd, maxTries)
+	if err != nil {
+		return nil, err
+	}
+
+	logic, err := validateAndGetConditionLogic(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	return createFinalCondition(conditions, logic), nil
+}
+
+func collectConditions(cmd *cobra.Command, maxTries uint) ([]retry.ConditionRetryer, error) {
+	var conditions []retry.ConditionRetryer
+	
+	// Always add max tries condition if specified
+	if maxTries > 0 {
+		conditions = append(conditions, retry.NewStopOnMaxTries(maxTries))
+	}
+	
+	// Add timeout condition
+	timeoutCondition, err := addTimeoutCondition(cmd)
+	if err != nil {
+		return nil, err
+	}
+	if timeoutCondition != nil {
+		conditions = append(conditions, timeoutCondition)
+	}
+	
+	// Add exit code condition
+	exitCondition, err := addExitCodeCondition(cmd)
+	if err != nil {
+		return nil, err
+	}
+	if exitCondition != nil {
+		conditions = append(conditions, exitCondition)
+	}
+	
+	// Add output conditions
+	outputConditions, err := addOutputConditions(cmd)
+	if err != nil {
+		return nil, err
+	}
+	conditions = append(conditions, outputConditions...)
+	
+	// Add time-of-day condition
+	timeCondition, err := addTimeOfDayCondition(cmd)
+	if err != nil {
+		return nil, err
+	}
+	if timeCondition != nil {
+		conditions = append(conditions, timeCondition)
+	}
+	
+	return conditions, nil
+}
+
+//nolint:ireturn // Factory function needs to return interface
+func addTimeoutCondition(cmd *cobra.Command) (retry.ConditionRetryer, error) {
+	timeoutValue := timeout
+	if timeout != "" && !cmd.Flags().Changed("timeout") {
+		timeoutValue = viper.GetString("timeout")
+	}
+	if timeoutValue == "" {
+		return nil, nil //nolint:nilnil // Valid for optional condition creation
+	}
+	
+	duration, err := time.ParseDuration(timeoutValue)
+	if err != nil {
+		return nil, fmt.Errorf("invalid timeout format: %w", err)
+	}
+	return retry.NewStopOnTimeout(duration), nil
+}
+
+//nolint:ireturn // Factory function needs to return interface
+func addExitCodeCondition(cmd *cobra.Command) (retry.ConditionRetryer, error) {
+	exitCodes := stopOnExit
+	if stopOnExit != "" && !cmd.Flags().Changed("stop-on-exit") {
+		exitCodes = viper.GetString("stop-on-exit")
+	}
+	if exitCodes == "" {
+		return nil, nil //nolint:nilnil // Valid for optional condition creation
+	}
+	
+	codes, err := parseExitCodes(exitCodes)
+	if err != nil {
+		return nil, err
+	}
+	return retry.NewStopOnExitCode(codes), nil
+}
+
+func addOutputConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) {
+	var conditions []retry.ConditionRetryer
+	
+	// Add output contains condition
+	containsPattern := stopWhenContains
+	if stopWhenContains != "" && !cmd.Flags().Changed("stop-when-contains") {
+		containsPattern = viper.GetString("stop-when-contains")
+	}
+	if containsPattern != "" {
+		condition, err := retry.NewStopOnOutputContains(containsPattern)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create output contains condition: %w", err)
+		}
+		conditions = append(conditions, condition)
+	}
+	
+	// Add output not contains condition
+	notContainsPattern := stopWhenNotContains
+	if stopWhenNotContains != "" && !cmd.Flags().Changed("stop-when-not-contains") {
+		notContainsPattern = viper.GetString("stop-when-not-contains")
+	}
+	if notContainsPattern != "" {
+		condition, err := retry.NewStopOnOutputNotContains(notContainsPattern)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create output not-contains condition: %w", err)
+		}
+		conditions = append(conditions, condition)
+	}
+	
+	return conditions, nil
+}
+
+//nolint:ireturn // Factory function needs to return interface
+func addTimeOfDayCondition(cmd *cobra.Command) (retry.ConditionRetryer, error) {
+	timeOfDay := stopAt
+	if stopAt != "" && !cmd.Flags().Changed("stop-at") {
+		timeOfDay = viper.GetString("stop-at")
+	}
+	if timeOfDay == "" {
+		return nil, nil //nolint:nilnil // Valid for optional condition creation
+	}
+	
+	condition, err := retry.NewStopAtTimeOfDay(timeOfDay)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create time-of-day condition: %w", err)
+	}
+	return condition, nil
+}
+
+func validateAndGetConditionLogic(cmd *cobra.Command) (retry.LogicOperator, error) {
+	logic := conditionLogic
+	if conditionLogic != "" && !cmd.Flags().Changed("condition-logic") {
+		logic = viper.GetString("condition-logic")
+	}
+	
+	if logic != "" {
+		upperLogic := strings.ToUpper(logic)
+		if upperLogic != "AND" && upperLogic != "OR" {
+			return retry.LogicOR, fmt.Errorf("invalid condition logic '%s': %w", logic, ErrInvalidConditionLogic)
+		}
+		if upperLogic == "AND" {
+			return retry.LogicAND, nil
+		}
+	}
+	
+	return retry.LogicOR, nil
+}
+
+//nolint:ireturn // Factory function needs to return interface
+func createFinalCondition(conditions []retry.ConditionRetryer, logic retry.LogicOperator) retry.ConditionRetryer {
+	if len(conditions) == 0 {
+		// Default to max tries = 3 if no conditions specified
+		const defaultMaxTries = 3
+		return retry.NewStopOnMaxTries(defaultMaxTries)
+	} else if len(conditions) == 1 {
+		return conditions[0]
+	}
+	
+	// Multiple conditions - use composite
+	return retry.NewCompositeCondition(logic, conditions...)
+}
+
+func parseExitCodes(codesStr string) ([]int, error) {
+	parts := strings.Split(codesStr, ",")
+	codes := make([]int, 0, len(parts))
+	
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		var code int
+		_, err := fmt.Sscanf(part, "%d", &code)
+		if err != nil {
+			return nil, fmt.Errorf("invalid exit code '%s': %w", part, err)
+		}
+		codes = append(codes, code)
+	}
+	
+	return codes, nil
+}
 
 func main() {
 	err := rootCmd.Execute()

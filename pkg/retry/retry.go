@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -86,11 +87,17 @@ func (r *Retry) executeSingleTry(logger *slog.Logger) error {
 	r.tries++
 	logger.Info("Try:", slog.Int("attempt n°", r.tries))
 	
-	rc, err := execCommand(r.condition.GetCtx(), r.cmd)
+	rc, stdout, stderr, err := execCommandWithOutput(r.condition.GetCtx(), r.cmd)
 	if rc == 0 {
 		logger.Info("End", slog.Int("return code", rc))
 	} else {
 		logger.Error("End", slog.Int("return code", rc))
+	}
+
+	// Pass exit code and output to enhanced conditions
+	if enhanced, ok := r.condition.(EnhancedConditionRetryer); ok {
+		enhanced.SetLastExitCode(rc)
+		enhanced.SetLastOutput(stdout, stderr)
 	}
 
 	if r.condition != nil {
@@ -121,25 +128,26 @@ func (r *Retry) performBackoff() {
 	}
 }
 
-func execCommand(ctx context.Context, cmd string) (int, error) {
+
+func execCommandWithOutput(ctx context.Context, cmd string) (int, string, string, error) {
 	var wg sync.WaitGroup
 	nbGoroutines := 2
 	commandSplitter, _ := splitter.NewSplitter(' ', splitter.SingleQuotes, splitter.DoubleQuotes)
 	trimmer := splitter.Trim("'\"")
 	splitCmd, _ := commandSplitter.Split(cmd, trimmer)
 	if len(splitCmd) == 0 {
-		return -1, nil
+		return -1, "", "", nil
 	}
 	c := exec.CommandContext(ctx, splitCmd[0], splitCmd[1:]...) //nolint:gosec
 
 	stderr, err := c.StderrPipe()
 	if err != nil {
-		return -1, fmt.Errorf("error creating stderr pipe: %w", err)
+		return -1, "", "", fmt.Errorf("error creating stderr pipe: %w", err)
 	}
 
 	stdout, err := c.StdoutPipe()
 	if err != nil {
-		return -1, fmt.Errorf("error creating stdout pipe: %w", err)
+		return -1, "", "", fmt.Errorf("error creating stdout pipe: %w", err)
 	}
 
 	err = c.Start()
@@ -147,35 +155,41 @@ func execCommand(ctx context.Context, cmd string) (int, error) {
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
 			// The command didn't exit successfully, so we can get the exit code
-			return exitError.ExitCode(), fmt.Errorf("command failed: %w", err)
+			return exitError.ExitCode(), "", "", fmt.Errorf("command failed: %w", err)
 		}
 		// The command didn't start at all or exited because of a signal
-		return -1, fmt.Errorf("command failed: %w", err)
+		return -1, "", "", fmt.Errorf("command failed: %w", err)
 	}
+
+	// Buffers to capture output
+	var stdoutBuf, stderrBuf strings.Builder
 
 	wg.Add(nbGoroutines)
 	go func() {
 		defer wg.Done()
-		_, _ = io.Copy(os.Stdout, stdout)
+		// Tee to both os.Stdout and buffer
+		_, _ = io.Copy(io.MultiWriter(os.Stdout, &stdoutBuf), stdout)
 	}()
 
 	go func() {
 		defer wg.Done()
-		_, _ = io.Copy(os.Stderr, stderr)
+		// Tee to both os.Stderr and buffer
+		_, _ = io.Copy(io.MultiWriter(os.Stderr, &stderrBuf), stderr)
 	}()
 
 	err = c.Wait()
 	stderr.Close() //nolint:errcheck,gosec
 	stdout.Close() //nolint:errcheck,gosec
 	wg.Wait()
+	
 	if err != nil {
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
 			// The command didn't exit successfully, so we can get the exit code
-			return exitError.ExitCode(), fmt.Errorf("command failed: %w", err)
+			return exitError.ExitCode(), stdoutBuf.String(), stderrBuf.String(), fmt.Errorf("command failed: %w", err)
 		}
 		// The command didn't start at all or exited because of a signal
-		return -1, fmt.Errorf("command failed: %w", err)
+		return -1, stdoutBuf.String(), stderrBuf.String(), fmt.Errorf("command failed: %w", err)
 	}
-	return 0, nil
+	return 0, stdoutBuf.String(), stderrBuf.String(), nil
 }

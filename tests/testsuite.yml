@@ -676,3 +676,218 @@ testcases:
     - result.code ShouldEqual 1
     - result.systemout ShouldContainSubstring "attempt n°"
 
+# =============================================================================
+# STOP CONDITION TESTS
+# =============================================================================
+
+- name: test-stop-on-exit-code-match
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --stop-on-exit "1,2" --max-tries 5 "sh -c 'exit 1'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "msg=Try:"
+    - result.systemout ShouldContainSubstring "return code"
+    - result.systemerr ShouldContainSubstring "retry failed"
+
+- name: test-stop-on-exit-code-no-match
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --stop-on-exit "3,4" --max-tries 2 "sh -c 'exit 1'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemerr ShouldContainSubstring "max tries reached"
+
+- name: test-stop-on-exit-code-success-continues
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --stop-on-exit "1,2" "echo success"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "success"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-stop-when-output-contains-match
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --stop-when-contains "success" --max-tries 5 "echo 'operation success completed'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "operation success completed"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-stop-when-output-contains-no-match
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --stop-when-contains "success" --max-tries 2 "echo 'operation failed'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "operation failed"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-stop-when-output-not-contains-match
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --stop-when-not-contains "error" --max-tries 5 "echo 'operation completed successfully'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "operation completed successfully"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-stop-when-output-not-contains-no-match
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --stop-when-not-contains "error" --max-tries 2 "sh -c 'echo error occurred; exit 1'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "error occurred"
+    - result.systemout ShouldContainSubstring "attempt n°"
+
+- name: test-stop-when-output-regex-pattern
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --stop-when-contains "\\d+ files processed" --max-tries 5 "echo 'Successfully processed 42 files processed'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "42 files processed"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-timeout-condition
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --timeout 100ms --delay 50ms "sh -c 'sleep 0.2; echo done'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemerr ShouldContainSubstring "context error"
+
+- name: test-timeout-condition-success-before-timeout
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --timeout 1s "echo quick success"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "quick success"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-stop-at-time-future
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      # Test with a time far in the future (23:59) - should not stop immediately
+      go run cmd/* --stop-at "23:59" --max-tries 2 "echo time test"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "time test"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-invalid-exit-codes
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --stop-on-exit "invalid,1" "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "invalid exit code"
+
+- name: test-invalid-timeout-format
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --timeout "invalid" "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "invalid timeout format"
+
+- name: test-invalid-time-format
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --stop-at "25:00" "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "invalid time format"
+
+# =============================================================================
+# COMPOSITE CONDITION TESTS
+# =============================================================================
+
+- name: test-composite-and-logic-both-match
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --max-tries 1 --stop-on-exit "1" --condition-logic "and" "sh -c 'exit 1'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemerr ShouldContainSubstring "max tries reached"
+
+- name: test-composite-or-logic-one-match
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --max-tries 5 --stop-on-exit "1" --condition-logic "or" "sh -c 'exit 1'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemerr ShouldContainSubstring "retry failed"
+
+- name: test-composite-multiple-conditions
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --max-tries 10 --stop-on-exit "2" --stop-when-contains "success" --condition-logic "or" "echo 'operation success'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "operation success"
+    - result.systemout ShouldContainSubstring "Command executed successfully"
+
+- name: test-composite-timeout-with-max-tries
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --timeout 200ms --max-tries 10 --delay 50ms --condition-logic "or" "sh -c 'sleep 0.3; echo done'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemerr ShouldContainSubstring "context error"
+
+- name: test-invalid-condition-logic
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}/..
+      go run cmd/* --condition-logic "invalid" "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "invalid condition logic"
+
