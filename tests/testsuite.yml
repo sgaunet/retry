@@ -983,3 +983,128 @@ testcases:
     - result.systemout ShouldContainSubstring "│ task done successfully"
     - result.systemout ShouldContainSubstring "✓ Success"
 
+# =============================================================================
+# ISSUE #21: Enhanced Output Control & Logging Tests
+# =============================================================================
+
+- name: test-json-output-success
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --json --max-tries 2 "echo success"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "successful"
+    - result.systemout ShouldContainSubstring "total_attempts"
+    - result.systemout ShouldContainSubstring "max_attempts"
+    - result.systemout ShouldContainSubstring "final_exit_code"
+    - result.systemout ShouldContainSubstring "attempts"
+    - result.systemout ShouldContainSubstring "success"
+
+- name: test-json-output-failure
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --json --max-tries 2 "exit 1"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "successful"
+    - result.systemout ShouldContainSubstring "total_attempts"
+    - result.systemout ShouldContainSubstring "failure_reason"
+    - result.systemout ShouldContainSubstring "stop_condition"
+    - result.systemout ShouldContainSubstring "success"
+
+- name: test-quiet-mode
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --quiet --max-tries 2 "echo 'quiet mode test'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "[1/2] Attempting command..."
+    - result.systemout ShouldContainSubstring "│ quiet mode test"
+    - result.systemout ShouldContainSubstring "✓ Success"
+
+- name: test-log-file-creation
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      rm -f test.log
+      go run ../cmd --log-file test.log --max-tries 1 "echo 'logged command'"
+      cat test.log
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "[1/1] Attempting command..."
+    - result.systemout ShouldContainSubstring "[STDOUT] logged command"
+    - result.systemout ShouldContainSubstring "✓ Success"
+
+- name: test-log-levels-debug
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --log-level debug --max-tries 1 "echo 'debug level test'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "[1/1] Attempting command..."
+    - result.systemout ShouldContainSubstring "│ debug level test"
+
+- name: test-log-levels-error
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --log-level error --max-tries 1 "echo 'error level test'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "[1/1] Attempting command..."
+    - result.systemout ShouldContainSubstring "│ error level test"
+
+- name: test-json-with-backoff-strategy
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --json --backoff exponential --max-tries 1 "echo 'backoff test'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "backoff_strategy"
+    - result.systemout ShouldContainSubstring "successful"
+
+- name: test-invalid-log-level
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --log-level invalid "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "log level must be one of"
+
+- name: test-conflicting-output-modes
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --json --summary-only "echo test"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemerr ShouldContainSubstring "cannot combine --json with other output modes"
+
+- name: test-json-with-multiple-attempts
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --json --max-tries 3 --delay 10ms "sh -c 'if [ ! -f /tmp/retry_test_flag ]; then touch /tmp/retry_test_flag; exit 1; else rm -f /tmp/retry_test_flag; echo success; fi'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "total_attempts"
+    - result.systemout ShouldContainSubstring "successful"
+    - result.systemout ShouldContainSubstring "attempt"
+    - result.systemout ShouldContainSubstring "success"
+

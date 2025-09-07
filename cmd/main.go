@@ -30,6 +30,9 @@ var (
 		"unsupported backoff strategy (supported: fixed, exponential, linear, fibonacci, custom)")
 	ErrInvalidJitter         = errors.New("jitter must be between 0.0 and 1.0")
 	ErrEmptyDelays           = errors.New("delays cannot be empty when using custom backoff")
+	ErrInvalidLogLevel       = errors.New("log level must be one of: error, warn, info, debug")
+	ErrConflictingOutputModes = errors.New(
+		"cannot combine --json with other output modes (--summary-only, --quiet-retries)")
 )
 
 var (
@@ -57,6 +60,12 @@ var (
 	noColor       bool
 	summaryOnly   bool
 	verboseOutput bool
+	
+	// New enhanced output flags.
+	quiet     bool
+	jsonMode  bool
+	logFile   string
+	logLevel  string
 )
 
 var rootCmd = &cobra.Command{
@@ -104,7 +113,20 @@ if it contains spaces or special characters.`,
   retry --stop-on-exit "0,1" "command"
   
   # Stop when output contains pattern
-  retry --stop-when-contains "ready" --timeout 30s "service-check"`,
+  retry --stop-when-contains "ready" --timeout 30s "service-check"
+  
+  # Enhanced Output Control & Logging (Issue #21)
+  # JSON output for automation
+  retry --json "curl -f https://api.example.com"
+  
+  # Quiet mode for minimal output
+  retry --quiet "make test"
+  
+  # File logging
+  retry --log-file retry.log "important-command"
+  
+  # Debug logging level
+  retry --log-level debug "troublesome-command"`,
 	Args: func(_ *cobra.Command, args []string) error {
 		// Check if command is provided as positional argument
 		if len(args) > 0 {
@@ -159,6 +181,12 @@ func setupOutputFlags() {
 	rootCmd.Flags().BoolVar(&noColor, "no-color", false, "disable colored output")
 	rootCmd.Flags().BoolVar(&summaryOnly, "summary-only", false, "only show final summary")
 	rootCmd.Flags().BoolVarP(&verboseOutput, "verbose-output", "V", false, "show detailed timing and condition info")
+	
+	// New enhanced output flags from issue #21
+	rootCmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "minimal output (only show final result)")
+	rootCmd.Flags().BoolVar(&jsonMode, "json", false, "output results as JSON")
+	rootCmd.Flags().StringVar(&logFile, "log-file", "", "write logs to file")
+	rootCmd.Flags().StringVar(&logLevel, "log-level", "info", "set log level (error, warn, info, debug)")
 }
 
 func setupEnvironmentBindings() {
@@ -173,6 +201,7 @@ func bindFlagsToViper() {
 		"multiplier", "increment", "jitter", "delays", "timeout", "stop-on-exit",
 		"stop-when-contains", "stop-when-not-contains", "stop-at", "condition-logic",
 		"quiet-retries", "no-color", "summary-only", "verbose-output",
+		"quiet", "json", "log-file", "log-level",
 	}
 	
 	for _, flag := range flags {
@@ -198,15 +227,82 @@ func runRetry(cmd *cobra.Command, args []string) error {
 	if commandStr == "" {
 		return ErrCommandEmpty
 	}
+	
+	// Validate flag combinations
+	err := validateFlags(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Parse configuration
 	finalMaxTries := parseMaxTries(cmd)
 
 	// Create enhanced logger based on flags
 	enhancedLogger := createEnhancedLogger(cmd)
+	defer func() {
+		closeErr := enhancedLogger.Close()
+		if closeErr != nil {
+			// Don't override the main error, just log to stderr
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: Failed to close logger: %v\n", closeErr)
+		}
+	}()
 
 	// Create and run retry with enhanced logging
 	return createAndRunRetryWithEnhancedLogging(commandStr, finalMaxTries, cmd, enhancedLogger)
+}
+
+// validateFlags validates flag combinations and values.
+func validateFlags(cmd *cobra.Command) error {
+	if err := validateLogLevel(cmd); err != nil {
+		return err
+	}
+	
+	return validateOutputModesConflicts(cmd)
+}
+
+// validateLogLevel validates the log level flag value.
+func validateLogLevel(cmd *cobra.Command) error {
+	finalLogLevel := logLevel
+	if !cmd.Flags().Changed("log-level") {
+		if envLogLevel := viper.GetString("log-level"); envLogLevel != "" {
+			finalLogLevel = envLogLevel
+		}
+	}
+	
+	validLevels := []string{"error", "warn", "warning", "info", "debug"}
+	for _, level := range validLevels {
+		if strings.ToLower(finalLogLevel) == level {
+			return nil
+		}
+	}
+	
+	return ErrInvalidLogLevel
+}
+
+// validateOutputModesConflicts checks for conflicting output mode flags.
+func validateOutputModesConflicts(cmd *cobra.Command) error {
+	conflictCount := 0
+	
+	if isOutputModeEnabled(cmd, "json", jsonMode) {
+		conflictCount++
+	}
+	if isOutputModeEnabled(cmd, "summary-only", summaryOnly) {
+		conflictCount++
+	}
+	if isOutputModeEnabled(cmd, "quiet-retries", quietRetries) {
+		conflictCount++
+	}
+	
+	if conflictCount > 1 {
+		return ErrConflictingOutputModes
+	}
+	
+	return nil
+}
+
+// isOutputModeEnabled checks if a specific output mode flag is enabled.
+func isOutputModeEnabled(cmd *cobra.Command, flagName string, flagValue bool) bool {
+	return flagValue || (!cmd.Flags().Changed(flagName) && viper.GetBool(flagName))
 }
 
 
@@ -328,51 +424,90 @@ func parseMultiplier(cmd *cobra.Command) (float64, error) {
 }
 
 
-func determineLogLevel() retry.LogLevel {
-	if summaryOnly {
-		return retry.LogLevelQuiet
-	} else if verboseOutput {
-		return retry.LogLevelVerbose
+// parseLogLevel converts string log level to LogLevel enum.
+func parseLogLevel(levelStr string) retry.LogLevel {
+	switch strings.ToLower(levelStr) {
+	case "error":
+		return retry.LogLevelError
+	case "warn", "warning":
+		return retry.LogLevelWarn
+	case "info":
+		return retry.LogLevelInfo
+	case "debug":
+		return retry.LogLevelDebug
+	default:
+		return retry.LogLevelInfo // Default to info
 	}
-	return retry.LogLevelNormal
 }
 
-func determineOutputMode() retry.OutputMode {
-	if summaryOnly {
+func determineLogLevel(cmd *cobra.Command) retry.LogLevel {
+	// Check for new --quiet flag (highest priority for minimal output)
+	if quiet || (!cmd.Flags().Changed("quiet") && viper.GetBool("quiet")) {
+		return retry.LogLevelError // Only show errors in quiet mode
+	}
+	
+	// Check for new --log-level flag
+	finalLogLevel := logLevel
+	if !cmd.Flags().Changed("log-level") {
+		if envLogLevel := viper.GetString("log-level"); envLogLevel != "" {
+			finalLogLevel = envLogLevel
+		}
+	}
+	
+	// Parse the log level from string
+	level := parseLogLevel(finalLogLevel)
+	
+	// Handle backward compatibility flags
+	switch {
+	case summaryOnly || quietRetries:
+		return retry.LogLevelQuiet
+	case verboseOutput:
+		return retry.LogLevelVerbose
+	case verbose:
+		return retry.LogLevelVerbose
+	}
+	
+	return level
+}
+
+func determineOutputMode(cmd *cobra.Command) retry.OutputMode {
+	// Check for JSON mode first (highest priority)
+	if jsonMode || (!cmd.Flags().Changed("json") && viper.GetBool("json")) {
+		return retry.OutputModeJSON
+	}
+	
+	// Check other output modes
+	if summaryOnly || (!cmd.Flags().Changed("summary-only") && viper.GetBool("summary-only")) {
 		return retry.OutputModeSummaryOnly
-	} else if quietRetries {
+	} else if quietRetries || (!cmd.Flags().Changed("quiet-retries") && viper.GetBool("quiet-retries")) {
 		return retry.OutputModeQuietRetries
 	}
 	return retry.OutputModeNormal
 }
 
-func applyEnvironmentOverrides(cmd *cobra.Command) (retry.LogLevel, retry.OutputMode) {
-	level := determineLogLevel()
-	mode := determineOutputMode()
+func applyEnvironmentOverrides(cmd *cobra.Command) (retry.LogLevel, retry.OutputMode, string) {
+	level := determineLogLevel(cmd)
+	mode := determineOutputMode(cmd)
 	
+	// Handle log file
+	finalLogFile := logFile
+	if !cmd.Flags().Changed("log-file") {
+		if envLogFile := viper.GetString("log-file"); envLogFile != "" {
+			finalLogFile = envLogFile
+		}
+	}
+	
+	// Apply environment overrides for other flags
 	if !cmd.Flags().Changed("no-color") && viper.GetBool("no-color") {
 		noColor = true
 	}
-	if !cmd.Flags().Changed("quiet-retries") && viper.GetBool("quiet-retries") {
-		quietRetries = true
-		mode = retry.OutputModeQuietRetries
-	}
-	if !cmd.Flags().Changed("summary-only") && viper.GetBool("summary-only") {
-		summaryOnly = true
-		mode = retry.OutputModeSummaryOnly
-		level = retry.LogLevelQuiet
-	}
-	if !cmd.Flags().Changed("verbose-output") && viper.GetBool("verbose-output") {
-		verboseOutput = true
-		level = retry.LogLevelVerbose
-	}
 	
-	return level, mode
+	return level, mode, finalLogFile
 }
 
 func createEnhancedLogger(cmd *cobra.Command) *retry.Logger {
-	level, mode := applyEnvironmentOverrides(cmd)
-	return retry.NewLogger(level, mode, noColor)
+	level, mode, finalLogFile := applyEnvironmentOverrides(cmd)
+	return retry.NewLoggerWithFile(level, mode, noColor, finalLogFile)
 }
 
 func createAndRunRetryWithEnhancedLogging(

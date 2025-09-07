@@ -1,6 +1,7 @@
 package retry
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -15,8 +16,16 @@ import (
 type LogLevel int
 
 const (
+	// LogLevelError shows only error messages.
+	LogLevelError LogLevel = iota
+	// LogLevelWarn shows warning and error messages.
+	LogLevelWarn
+	// LogLevelInfo shows informational, warning, and error messages.
+	LogLevelInfo
+	// LogLevelDebug shows all messages including debug information.
+	LogLevelDebug
 	// LogLevelQuiet shows minimal output.
-	LogLevelQuiet LogLevel = iota
+	LogLevelQuiet
 	// LogLevelNormal shows standard output.
 	LogLevelNormal
 	// LogLevelVerbose shows detailed output.
@@ -40,6 +49,8 @@ const (
 	OutputModeQuietRetries
 	// OutputModeSummaryOnly shows only the execution summary.
 	OutputModeSummaryOnly
+	// OutputModeJSON outputs structured JSON data.
+	OutputModeJSON
 )
 
 // Logger provides enhanced logging with colors and better formatting.
@@ -50,6 +61,7 @@ type Logger struct {
 	mode       OutputMode
 	noColor    bool
 	startTime  time.Time
+	logFile    io.WriteCloser // Optional log file
 	
 	// Color functions
 	dimColor     func(a ...interface{}) string
@@ -63,6 +75,9 @@ type Logger struct {
 	maxAttempts    int
 	lastExitCode   int
 	summary        *ExecutionSummary
+	
+	// JSON output tracking
+	jsonOutput *JSONOutput
 }
 
 // ExecutionSummary holds information about the retry execution.
@@ -80,8 +95,40 @@ type ExecutionSummary struct {
 	BackoffStrategy   string
 }
 
+// JSONAttempt represents a single retry attempt in JSON output.
+type JSONAttempt struct {
+	Attempt   int           `json:"attempt"`
+	ExitCode  int           `json:"exit_code"`
+	Duration  string        `json:"duration"`
+	Output    string        `json:"output"`
+	Success   bool          `json:"success"`
+	StartTime time.Time     `json:"start_time"`
+	EndTime   time.Time     `json:"end_time"`
+}
+
+// JSONOutput represents the complete JSON output structure.
+type JSONOutput struct {
+	Command        string         `json:"command"`
+	TotalAttempts  int           `json:"total_attempts"`
+	Successful     bool          `json:"successful"`
+	TotalDuration  string        `json:"total_duration"`
+	StartTime      time.Time     `json:"start_time"`
+	EndTime        time.Time     `json:"end_time"`
+	FinalExitCode  int           `json:"final_exit_code"`
+	BackoffStrategy string       `json:"backoff_strategy"`
+	MaxAttempts    int           `json:"max_attempts"`
+	FailureReason  string        `json:"failure_reason,omitempty"`
+	StopCondition  string        `json:"stop_condition,omitempty"`
+	Attempts       []JSONAttempt `json:"attempts"`
+}
+
 // NewLogger creates a new enhanced logger.
 func NewLogger(level LogLevel, mode OutputMode, noColor bool) *Logger {
+	return NewLoggerWithFile(level, mode, noColor, "")
+}
+
+// NewLoggerWithFile creates a new enhanced logger with optional file logging.
+func NewLoggerWithFile(level LogLevel, mode OutputMode, noColor bool, logFilePath string) *Logger {
 	l := &Logger{
 		out:       os.Stdout,
 		err:       os.Stderr,
@@ -92,8 +139,37 @@ func NewLogger(level LogLevel, mode OutputMode, noColor bool) *Logger {
 		summary:   &ExecutionSummary{StartTime: time.Now()},
 	}
 	
+	// Initialize JSON output if needed
+	if mode == OutputModeJSON {
+		l.jsonOutput = &JSONOutput{
+			StartTime: time.Now(),
+			Attempts:  make([]JSONAttempt, 0),
+		}
+	}
+	
+	// Setup log file if specified
+	if logFilePath != "" {
+		// Basic validation to prevent directory traversal
+		if !strings.Contains(logFilePath, "..") {
+			file, err := os.Create(logFilePath) // #nosec G304 - user-provided log file path is intentional
+			if err == nil {
+				l.logFile = file
+			}
+		}
+	}
+	
 	l.setupColors()
 	return l
+}
+
+// Close closes any open log file.
+func (l *Logger) Close() error {
+	if l.logFile != nil {
+		if err := l.logFile.Close(); err != nil {
+			return fmt.Errorf("failed to close log file: %w", err)
+		}
+	}
+	return nil
 }
 
 
@@ -103,13 +179,30 @@ func (l *Logger) StartExecution(command string, maxAttempts int, backoffStrategy
 	l.summary.MaxAttempts = maxAttempts
 	l.summary.BackoffStrategy = backoffStrategy
 	l.maxAttempts = maxAttempts
+	
+	// Initialize JSON output if needed
+	if l.mode == OutputModeJSON && l.jsonOutput != nil {
+		l.jsonOutput.Command = command
+		l.jsonOutput.MaxAttempts = maxAttempts
+		l.jsonOutput.BackoffStrategy = backoffStrategy
+		l.jsonOutput.StartTime = time.Now()
+	}
 }
 
 // StartAttempt logs the start of a new retry attempt.
 func (l *Logger) StartAttempt(attempt int) {
 	l.currentAttempt = attempt
 	
-	if l.mode == OutputModeSummaryOnly {
+	// Track JSON attempt start
+	if l.mode == OutputModeJSON && l.jsonOutput != nil {
+		jsonAttempt := JSONAttempt{
+			Attempt:   attempt,
+			StartTime: time.Now(),
+		}
+		l.jsonOutput.Attempts = append(l.jsonOutput.Attempts, jsonAttempt)
+	}
+	
+	if l.mode == OutputModeSummaryOnly || l.mode == OutputModeJSON {
 		return
 	}
 	
@@ -125,40 +218,41 @@ func (l *Logger) StartAttempt(attempt int) {
 	if attempt == 1 {
 		msg := fmt.Sprintf("%s %s", l.boldColor(attemptMsg), "Attempting command...")
 		_, _ = fmt.Fprintln(l.out, msg)
+		l.writeToLogFile(msg)
 	} else {
 		msg := fmt.Sprintf("%s %s", l.boldColor(attemptMsg), "Retrying...")
 		_, _ = fmt.Fprintln(l.out, msg)
+		l.writeToLogFile(msg)
 	}
 }
 
 // LogCommandOutput logs output from the executed command with proper formatting.
 func (l *Logger) LogCommandOutput(line string, isStderr bool) {
-	if l.mode == OutputModeSummaryOnly {
+	l.storeJSONOutput(line)
+	l.writeFileOutput(line, isStderr)
+	
+	if l.shouldSkipConsoleOutput() {
 		return
 	}
 	
-	if l.mode == OutputModeQuietRetries && l.currentAttempt < l.maxAttempts {
-		// Skip output for non-final attempts in quiet mode
-		return
-	}
-	
-	prefix := l.dimColor("│ ")
-	var output string
-	
-	if isStderr {
-		output = l.errorColor(line)
-	} else {
-		output = line
-	}
-	
-	_, _ = fmt.Fprintf(l.out, "%s%s\n", prefix, output)
+	l.writeConsoleOutput(line, isStderr)
 }
 
 // EndAttempt logs the result of an attempt.
 func (l *Logger) EndAttempt(exitCode int, success bool) {
 	l.lastExitCode = exitCode
 	
-	if l.mode == OutputModeSummaryOnly {
+	// Update JSON attempt data
+	if l.mode == OutputModeJSON && l.jsonOutput != nil && len(l.jsonOutput.Attempts) > 0 {
+		lastAttemptIdx := len(l.jsonOutput.Attempts) - 1
+		attempt := &l.jsonOutput.Attempts[lastAttemptIdx]
+		attempt.ExitCode = exitCode
+		attempt.Success = success
+		attempt.EndTime = time.Now()
+		attempt.Duration = attempt.EndTime.Sub(attempt.StartTime).String()
+	}
+	
+	if l.mode == OutputModeSummaryOnly || l.mode == OutputModeJSON {
 		return
 	}
 	
@@ -170,6 +264,7 @@ func (l *Logger) EndAttempt(exitCode int, success bool) {
 	}
 	
 	_, _ = fmt.Fprintln(l.out, statusMsg)
+	l.writeToLogFile(statusMsg)
 	
 	if !success && l.currentAttempt < l.maxAttempts {
 		_, _ = fmt.Fprintln(l.out) // Add blank line between attempts
@@ -178,13 +273,14 @@ func (l *Logger) EndAttempt(exitCode int, success bool) {
 
 // LogRetryDelay logs information about retry delay.
 func (l *Logger) LogRetryDelay(delay time.Duration) {
-	if l.mode == OutputModeSummaryOnly || l.level == LogLevelQuiet {
+	if l.mode == OutputModeSummaryOnly || l.mode == OutputModeJSON || l.level == LogLevelQuiet {
 		return
 	}
 	
 	if delay > 0 {
 		msg := l.dimColor(fmt.Sprintf("Waiting %v before retry...", delay))
 		_, _ = fmt.Fprintln(l.out, msg)
+		l.writeToLogFile(msg)
 	}
 }
 
@@ -198,32 +294,144 @@ func (l *Logger) EndExecution(success bool, failureReason string, stopCondition 
 	l.summary.FailureReason = failureReason
 	l.summary.StopCondition = stopCondition
 	
-	l.printSummary()
+	if l.mode == OutputModeJSON {
+		l.outputJSON(success, failureReason, stopCondition)
+	} else {
+		l.printSummary()
+	}
 }
 
+// Debug logs a debug message.
+func (l *Logger) Debug(msg string) {
+	if l.level < LogLevelDebug || l.mode == OutputModeSummaryOnly || l.mode == OutputModeJSON {
+		return
+	}
+	debugMsg := l.dimColor("DEBUG: " + msg)
+	_, _ = fmt.Fprintln(l.out, debugMsg)
+	l.writeToLogFile(debugMsg)
+}
 
 // Info logs an informational message.
 func (l *Logger) Info(msg string) {
-	if l.level == LogLevelQuiet || l.mode == OutputModeSummaryOnly {
+	if l.level < LogLevelInfo || l.mode == OutputModeSummaryOnly || l.mode == OutputModeJSON {
 		return
 	}
 	_, _ = fmt.Fprintln(l.out, msg)
+	l.writeToLogFile(msg)
+}
+
+// Warn logs a warning message.
+func (l *Logger) Warn(msg string) {
+	if l.level < LogLevelWarn || l.mode == OutputModeJSON {
+		return
+	}
+	warnMsg := l.warnColor("WARN: " + msg)
+	_, _ = fmt.Fprintln(l.err, warnMsg)
+	l.writeToLogFile(warnMsg)
 }
 
 // Error logs an error message.
 func (l *Logger) Error(msg string) {
-	if l.level == LogLevelQuiet {
+	if l.level < LogLevelError || l.mode == OutputModeJSON {
 		return
 	}
-	_, _ = fmt.Fprintln(l.err, l.errorColor(msg))
+	errorMsg := l.errorColor("ERROR: " + msg)
+	_, _ = fmt.Fprintln(l.err, errorMsg)
+	l.writeToLogFile(errorMsg)
 }
 
-// Verbose logs a verbose message.
+// Verbose logs a verbose message (for backward compatibility).
 func (l *Logger) Verbose(msg string) {
-	if l.level != LogLevelVerbose || l.mode == OutputModeSummaryOnly {
+	if l.level != LogLevelVerbose || l.mode == OutputModeSummaryOnly || l.mode == OutputModeJSON {
 		return
 	}
-	_, _ = fmt.Fprintln(l.out, l.dimColor(msg))
+	verboseMsg := l.dimColor(msg)
+	_, _ = fmt.Fprintln(l.out, verboseMsg)
+	l.writeToLogFile(verboseMsg)
+}
+
+// writeToLogFile writes a message to the log file if it exists.
+func (l *Logger) writeToLogFile(msg string) {
+	if l.logFile != nil {
+		timestamp := time.Now().Format("2006-01-02 15:04:05")
+		_, _ = fmt.Fprintf(l.logFile, "[%s] %s\n", timestamp, msg)
+	}
+}
+
+// storeJSONOutput stores command output for JSON mode.
+func (l *Logger) storeJSONOutput(line string) {
+	if l.mode != OutputModeJSON || l.jsonOutput == nil || len(l.jsonOutput.Attempts) == 0 {
+		return
+	}
+	
+	lastAttemptIdx := len(l.jsonOutput.Attempts) - 1
+	if l.jsonOutput.Attempts[lastAttemptIdx].Output == "" {
+		l.jsonOutput.Attempts[lastAttemptIdx].Output = line
+	} else {
+		l.jsonOutput.Attempts[lastAttemptIdx].Output += "\n" + line
+	}
+}
+
+// writeFileOutput writes command output to log file if configured.
+func (l *Logger) writeFileOutput(line string, isStderr bool) {
+	if l.logFile == nil {
+		return
+	}
+	
+	prefix := "[STDOUT] "
+	if isStderr {
+		prefix = "[STDERR] "
+	}
+	l.writeToLogFile(prefix + line)
+}
+
+// shouldSkipConsoleOutput determines if console output should be skipped.
+func (l *Logger) shouldSkipConsoleOutput() bool {
+	if l.mode == OutputModeSummaryOnly || l.mode == OutputModeJSON {
+		return true
+	}
+	
+	return l.mode == OutputModeQuietRetries && l.currentAttempt < l.maxAttempts
+}
+
+// writeConsoleOutput writes formatted output to console.
+func (l *Logger) writeConsoleOutput(line string, isStderr bool) {
+	prefix := l.dimColor("│ ")
+	output := line
+	if isStderr {
+		output = l.errorColor(line)
+	}
+	
+	_, _ = fmt.Fprintf(l.out, "%s%s\n", prefix, output)
+}
+
+// outputJSON outputs the execution result as JSON.
+func (l *Logger) outputJSON(success bool, failureReason string, stopCondition string) {
+	if l.jsonOutput == nil {
+		return
+	}
+	
+	l.jsonOutput.EndTime = time.Now()
+	l.jsonOutput.TotalDuration = l.jsonOutput.EndTime.Sub(l.jsonOutput.StartTime).String()
+	l.jsonOutput.TotalAttempts = l.currentAttempt
+	l.jsonOutput.Successful = success
+	l.jsonOutput.FinalExitCode = l.lastExitCode
+	l.jsonOutput.FailureReason = failureReason
+	l.jsonOutput.StopCondition = stopCondition
+	
+	jsonData, err := json.MarshalIndent(l.jsonOutput, "", "  ")
+	if err != nil {
+		_, _ = fmt.Fprintf(l.err, "Error marshaling JSON: %v\n", err)
+		return
+	}
+	
+	_, _ = fmt.Fprintln(l.out, string(jsonData))
+	
+	// Also write to log file if available
+	if l.logFile != nil {
+		l.writeToLogFile("JSON OUTPUT:")
+		l.writeToLogFile(string(jsonData))
+	}
 }
 
 // setupColors initializes color functions based on noColor setting.
@@ -245,7 +453,8 @@ func (l *Logger) setupColors() {
 
 // printSummary prints the final execution summary.
 func (l *Logger) printSummary() {
-	if l.level == LogLevelQuiet {
+	// Don't print summary for quiet log level, unless it's an explicit output mode that should show summary
+	if l.level == LogLevelQuiet && l.mode != OutputModeQuietRetries {
 		return
 	}
 	

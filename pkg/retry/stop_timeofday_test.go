@@ -52,23 +52,33 @@ func TestNewStopAtTimeOfDay_Invalid(t *testing.T) {
 }
 
 func TestNewStopAtTimeOfDay_FutureTime(t *testing.T) {
+	// Test with a fixed future time that's definitely later today (if possible)
+	// or tomorrow if we're very close to midnight
 	now := time.Now()
-	// Create a time 2 hours from now
-	futureTime := now.Add(2 * time.Hour)
-	timeStr := futureTime.Format("15:04")
-
+	
+	// Choose 23:59 as our target time
+	timeStr := "23:59"
+	
 	condition, err := NewStopAtTimeOfDay(timeStr)
 	if err != nil {
 		t.Fatalf("NewStopAtTimeOfDay should not return error: %v", err)
 	}
 
-	// Stop time should be today
-	if condition.stopTime.Day() != now.Day() {
-		t.Errorf("Expected stop time to be today, but got day %d", condition.stopTime.Day())
+	// Calculate expected day based on NewStopAtTimeOfDay logic:
+	// If 23:59 today is in the future, it should be today
+	// If 23:59 today is in the past (i.e., current time is 23:59), it should be tomorrow
+	targetTime := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 0, 0, now.Location())
+	expectedDay := now.Day()
+	if targetTime.Before(now) || targetTime.Equal(now) {
+		expectedDay = now.Add(24 * time.Hour).Day()
 	}
 
-	// Should not have reached the limit yet
-	if condition.IsLimitReached() {
+	if condition.stopTime.Day() != expectedDay {
+		t.Errorf("Expected stop time to be day %d, but got day %d (current time: %v, target: 23:59)", expectedDay, condition.stopTime.Day(), now.Format("15:04:05"))
+	}
+
+	// Should not have reached the limit yet (unless we're exactly at 23:59 or later)
+	if condition.IsLimitReached() && now.Before(targetTime) {
 		t.Error("Should not have reached limit for future time")
 	}
 }

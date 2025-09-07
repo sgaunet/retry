@@ -17,3 +17,5 @@ linters:
     - forbidigo
     - varnamelen
     - exhaustruct
+    - noinlineerr
+    - tagliatelle
