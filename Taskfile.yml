@@ -36,7 +36,7 @@ tasks:
     desc: "Run tests"
     dir: tests
     cmds:
-      - venom run testsuite.yml --output-dir="log" --stop-on-failure
+      - venom run testsuite.yml --output-dir="log"
 
   snapshot:
     desc: "Create snapshot"

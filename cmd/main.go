@@ -52,6 +52,12 @@ var (
 	stopWhenNotContains  string
 	stopAt               string
 	conditionLogic       string
+	
+	// Output control flags.
+	quietRetries  bool
+	noColor       bool
+	summaryOnly   bool
+	verboseOutput bool
 )
 
 var rootCmd = &cobra.Command{
@@ -149,6 +155,12 @@ func init() {
 		"stop when output doesn't contain pattern")
 	rootCmd.Flags().StringVar(&stopAt, "stop-at", "", "stop at specific time (HH:MM format)")
 	rootCmd.Flags().StringVar(&conditionLogic, "condition-logic", "OR", "logic for multiple conditions (AND or OR)")
+	
+	// Output control flags.
+	rootCmd.Flags().BoolVar(&quietRetries, "quiet-retries", false, "only show command output on final attempt")
+	rootCmd.Flags().BoolVar(&noColor, "no-color", false, "disable colored output")
+	rootCmd.Flags().BoolVar(&summaryOnly, "summary-only", false, "only show final summary")
+	rootCmd.Flags().BoolVarP(&verboseOutput, "verbose-output", "V", false, "show detailed timing and condition info")
 
 	// Bind environment variables
 	viper.SetEnvPrefix("RETRY")
@@ -172,13 +184,13 @@ func init() {
 	_ = viper.BindPFlag("stop-when-not-contains", rootCmd.Flags().Lookup("stop-when-not-contains"))
 	_ = viper.BindPFlag("stop-at", rootCmd.Flags().Lookup("stop-at"))
 	_ = viper.BindPFlag("condition-logic", rootCmd.Flags().Lookup("condition-logic"))
+	_ = viper.BindPFlag("quiet-retries", rootCmd.Flags().Lookup("quiet-retries"))
+	_ = viper.BindPFlag("no-color", rootCmd.Flags().Lookup("no-color"))
+	_ = viper.BindPFlag("summary-only", rootCmd.Flags().Lookup("summary-only"))
+	_ = viper.BindPFlag("verbose-output", rootCmd.Flags().Lookup("verbose-output"))
 }
 
 func runRetry(cmd *cobra.Command, args []string) error {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-
 	// Get command from positional arguments
 	commandStr := strings.Join(args, " ")
 	if commandStr == "" {
@@ -188,8 +200,11 @@ func runRetry(cmd *cobra.Command, args []string) error {
 	// Parse configuration
 	finalMaxTries := parseMaxTries(cmd)
 
-	// Create and run retry with strategy building inside
-	return createAndRunRetryWithStrategy(commandStr, finalMaxTries, cmd, logger)
+	// Create enhanced logger based on flags
+	enhancedLogger := createEnhancedLogger(cmd)
+
+	// Create and run retry with enhanced logging
+	return createAndRunRetryWithEnhancedLogging(commandStr, finalMaxTries, cmd, enhancedLogger)
 }
 
 
@@ -337,6 +352,78 @@ func createAndRunRetryWithStrategy(
 	// Set backoff strategy and run
 	r.SetBackoffStrategy(strategy)
 	err = r.Run(logger)
+	if err != nil {
+		return fmt.Errorf("retry failed: %w", err)
+	}
+
+	return nil
+}
+
+func createEnhancedLogger(cmd *cobra.Command) *retry.Logger {
+	// Determine log level
+	var level retry.LogLevel = retry.LogLevelNormal
+	if summaryOnly {
+		level = retry.LogLevelQuiet
+	} else if verboseOutput {
+		level = retry.LogLevelVerbose
+	}
+	
+	// Determine output mode  
+	var mode retry.OutputMode = retry.OutputModeNormal
+	if summaryOnly {
+		mode = retry.OutputModeSummaryOnly
+	} else if quietRetries {
+		mode = retry.OutputModeQuietRetries
+	}
+	
+	// Check for environment variable overrides
+	if !cmd.Flags().Changed("no-color") && viper.GetBool("no-color") {
+		noColor = true
+	}
+	if !cmd.Flags().Changed("quiet-retries") && viper.GetBool("quiet-retries") {
+		quietRetries = true
+		mode = retry.OutputModeQuietRetries
+	}
+	if !cmd.Flags().Changed("summary-only") && viper.GetBool("summary-only") {
+		summaryOnly = true
+		mode = retry.OutputModeSummaryOnly
+		level = retry.LogLevelQuiet
+	}
+	if !cmd.Flags().Changed("verbose-output") && viper.GetBool("verbose-output") {
+		verboseOutput = true
+		level = retry.LogLevelVerbose
+	}
+	
+	return retry.NewLogger(level, mode, noColor)
+}
+
+func createAndRunRetryWithEnhancedLogging(
+	commandStr string,
+	finalMaxTries uint,
+	cmd *cobra.Command,
+	logger *retry.Logger,
+) error {
+	// Build stop conditions
+	condition, err := buildStopConditions(cmd, finalMaxTries)
+	if err != nil {
+		return fmt.Errorf("failed to build stop conditions: %w", err)
+	}
+
+	// Create retry instance
+	r, err := retry.NewRetry(commandStr, condition)
+	if err != nil {
+		return fmt.Errorf("failed to create retry instance: %w", err)
+	}
+
+	// Build strategy
+	strategy, err := buildStrategy(cmd)
+	if err != nil {
+		return err
+	}
+	
+	// Set backoff strategy and run with enhanced logging
+	r.SetBackoffStrategy(strategy)
+	err = r.RunWithEnhancedLogger(logger)
 	if err != nil {
 		return fmt.Errorf("retry failed: %w", err)
 	}

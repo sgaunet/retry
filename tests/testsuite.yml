@@ -12,8 +12,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* version
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd version
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldEqual "dev"
@@ -22,8 +22,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --help
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --help
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "retry is a CLI tool"
@@ -38,41 +38,43 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* "echo hello world"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd "echo hello world"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "hello world"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "✓ Success"
 
 - name: test-modern-max-tries-flag
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --max-tries 2 "sh -c 'exit 1'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --max-tries 2 "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "msg=Try:"
-    - result.systemout ShouldContainSubstring "return code"
+    - result.systemout ShouldContainSubstring "Attempting command"
+    - result.systemout ShouldContainSubstring "Failed with exit code 1"
+    - result.systemout ShouldContainSubstring "Retrying"
+    - result.systemout ShouldContainSubstring "Attempts"
 
 - name: test-short-flags
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* -t 1 -d 100ms "echo short flags work"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd -t 1 -d 100ms "echo short flags work"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "short flags work"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "✓ Success"
 
 - name: test-duration-formats
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --delay 500ms --max-tries 1 "echo duration test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --delay 500ms --max-tries 1 "echo duration test"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "duration test"
@@ -85,19 +87,20 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      RETRY_MAX_TRIES=2 go run cmd/* "sh -c 'exit 1'"
+      cd {{.venom.testsuite.workdir}}
+      RETRY_MAX_TRIES=2 go run ../cmd "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "msg=Try:"
+    - result.systemout ShouldContainSubstring "[1/2] Attempting command..."
+    - result.systemout ShouldContainSubstring "[2/2] Retrying..."
     - result.systemerr ShouldContainSubstring "retry failed"
 
 - name: test-flag-overrides-env
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      RETRY_MAX_TRIES=5 go run cmd/* --max-tries 1 "echo flag wins"
+      cd {{.venom.testsuite.workdir}}
+      RETRY_MAX_TRIES=5 go run ../cmd --max-tries 1 "echo flag wins"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "flag wins"
@@ -106,8 +109,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      RETRY_MAX_TRIES=1 RETRY_DELAY=100ms go run cmd/* "echo env vars work"
+      cd {{.venom.testsuite.workdir}}
+      RETRY_MAX_TRIES=1 RETRY_DELAY=100ms go run ../cmd "echo env vars work"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "env vars work"
@@ -120,31 +123,32 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* "echo success"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd "echo success"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-failing-command-exhausts-retries
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --max-tries 3 "sh -c 'exit 42'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --max-tries 3 "sh -c 'exit 42'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "msg=Try:"
+    - result.systemout ShouldContainSubstring "[1/3] Attempting command..."
+    - result.systemout ShouldContainSubstring "[3/3] Retrying..."
     - result.systemerr ShouldContainSubstring "retry failed"
 
 - name: test-zero-max-tries-infinite
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      timeout 2s go run cmd/* --max-tries 0 --delay 500ms "sh -c 'exit 1'" || true
+      cd {{.venom.testsuite.workdir}}
+      timeout 2s go run ../cmd --max-tries 0 --delay 500ms "sh -c 'exit 1'" || true
     assertions:
-    - result.systemout ShouldContainSubstring "msg=Try:"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 # =============================================================================
 # ERROR HANDLING & EDGE CASES
@@ -154,8 +158,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/*
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "command is required"
@@ -166,8 +170,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --delay "invalid" "echo test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --delay "invalid" "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "invalid delay format"
@@ -177,8 +181,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --max-tries 1 "sh -c 'exit 1'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --max-tries 1 "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "retry failed"
@@ -188,8 +192,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* "echo 'hello world with spaces'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd "echo 'hello world with spaces'"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "hello world with spaces"
@@ -198,8 +202,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* ""
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd ""
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "command is required"
@@ -212,37 +216,36 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* "echo log test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd "echo log test"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "time="
-    - result.systemout ShouldContainSubstring "level=INFO"
-    - result.systemout ShouldContainSubstring "msg=Try:"
+    - result.systemout ShouldContainSubstring "Attempting command"
+    - result.systemout ShouldContainSubstring "│ log test"
+    - result.systemout ShouldContainSubstring "✓ Success"
 
 - name: test-return-code-logging
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --max-tries 1 "sh -c 'exit 5'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --max-tries 1 "sh -c 'exit 5'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "level=ERROR"
-    - result.systemout ShouldContainSubstring "msg=End"
-    - result.systemout ShouldContainSubstring "return code"
+    - result.systemout ShouldContainSubstring "✗ Failed with exit code 5"
+    - result.systemout ShouldContainSubstring "Final exit code"
 
 - name: test-success-vs-failure-logging
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* "sh -c 'exit 0'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd "sh -c 'exit 0'"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "level=INFO msg=End"
-    - result.systemout ShouldContainSubstring "return code"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "✓ Success"
+    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring "Final exit code"
 
 # =============================================================================
 # INTEGRATION TESTS
@@ -252,33 +255,34 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --max-tries 2 "ls /nonexistent/path/12345"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --max-tries 2 "ls /nonexistent/path/12345"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "msg=Try:"
-    - result.systemerr ShouldContainSubstring "No such file or directory"
+    - result.systemout ShouldContainSubstring "[1/2] Attempting command..."
+    - result.systemout ShouldContainSubstring "[2/2] Retrying..."
+    - result.systemout ShouldContainSubstring "No such file"
 
 - name: test-real-succeeding-commands
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* "ls /tmp"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd "ls /tmp"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-complex-command-pipeline
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* 'echo "hello world" | grep world | wc -l'
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd 'echo "hello world" | grep world | wc -l'
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "1"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 # =============================================================================
 # EXPONENTIAL BACKOFF TESTS
@@ -288,72 +292,72 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff exponential --base-delay 10ms --max-tries 3 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff exponential --base-delay 10ms --max-tries 3 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
     - result.systemerr ShouldContainSubstring "max tries reached"
 
 - name: test-exponential-backoff-short-flag
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff exp -b 5ms -M 100ms --max-tries 2 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff exp -b 5ms -M 100ms --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
     - result.systemerr ShouldContainSubstring "retry failed"
 
 - name: test-exponential-backoff-custom-multiplier
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff exponential --base-delay 1ms --multiplier 1.5 --max-tries 3 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff exponential --base-delay 1ms --multiplier 1.5 --max-tries 3 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-fixed-backoff-default
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --delay 10ms --max-tries 2 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --delay 10ms --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
     - result.systemerr ShouldContainSubstring "retry failed"
 
 - name: test-fixed-backoff-explicit
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff fixed --delay 5ms --max-tries 2 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff fixed --delay 5ms --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-exponential-backoff-success
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff exponential --base-delay 1ms "echo success"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff exponential --base-delay 1ms "echo success"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "success"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-exponential-backoff-invalid-multiplier
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff exponential --multiplier 0.5 "echo test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff exponential --multiplier 0.5 "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "multiplier must be greater than 1.0"
@@ -362,8 +366,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff exponential --base-delay "invalid" "echo test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff exponential --base-delay "invalid" "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "invalid base-delay format"
@@ -372,8 +376,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff exponential --max-delay "invalid" "echo test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff exponential --max-delay "invalid" "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "invalid max-delay format"
@@ -382,8 +386,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff invalid "echo test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff invalid "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "unsupported backoff strategy"
@@ -396,40 +400,40 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff linear --base-delay 10ms --increment 5ms --max-tries 3 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff linear --base-delay 10ms --increment 5ms --max-tries 3 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
     - result.systemerr ShouldContainSubstring "max tries reached"
 
 - name: test-linear-backoff-with-max-delay
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff linear --base-delay 5ms --increment 10ms --max-delay 20ms --max-tries 4 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff linear --base-delay 5ms --increment 10ms --max-delay 20ms --max-tries 4 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-linear-backoff-success
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff linear --base-delay 1ms --increment 1ms "echo linear success"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff linear --base-delay 1ms --increment 1ms "echo linear success"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "linear success"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-linear-backoff-invalid-increment
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff linear --increment "invalid" "echo test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff linear --increment "invalid" "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "invalid increment format"
@@ -442,44 +446,44 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff fibonacci --base-delay 10ms --max-tries 3 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff fibonacci --base-delay 10ms --max-tries 3 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
     - result.systemerr ShouldContainSubstring "max tries reached"
 
 - name: test-fibonacci-backoff-short-flag
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff fib -b 5ms -M 100ms --max-tries 2 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff fib -b 5ms -M 100ms --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-fibonacci-backoff-with-max-delay
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff fibonacci --base-delay 10ms --max-delay 50ms --max-tries 6 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff fibonacci --base-delay 10ms --max-delay 50ms --max-tries 6 "false"
     assertions:
     - result.code ShouldEqual 1
     # Should see attempts but delays capped at max
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-fibonacci-backoff-success
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff fibonacci --base-delay 1ms "echo fib success"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff fibonacci --base-delay 1ms "echo fib success"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "fib success"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 # =============================================================================
 # CUSTOM BACKOFF TESTS
@@ -489,50 +493,50 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff custom --delays "10ms,20ms,50ms" --max-tries 3 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff custom --delays "10ms,20ms,50ms" --max-tries 3 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
     - result.systemerr ShouldContainSubstring "max tries reached"
 
 - name: test-custom-backoff-single-delay
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff custom --delays "15ms" --max-tries 2 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff custom --delays "15ms" --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-custom-backoff-complex-sequence
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff custom --delays "100ms,200ms,500ms,1s,2s" --max-tries 4 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff custom --delays "100ms,200ms,500ms,1s,2s" --max-tries 4 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-custom-backoff-success
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff custom --delays "1ms,2ms,5ms" "echo custom success"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff custom --delays "1ms,2ms,5ms" "echo custom success"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "custom success"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-custom-backoff-empty-delays
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff custom --delays "" "echo test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff custom --delays "" "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "delays cannot be empty"
@@ -541,8 +545,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff custom --delays "1s,invalid,3s" "echo test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff custom --delays "1s,invalid,3s" "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "invalid delay format"
@@ -551,12 +555,12 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff custom --delays "100ms, 200ms, 500ms" --max-tries 2 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff custom --delays "100ms, 200ms, 500ms" --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
     # Should work with spaces around commas
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 # =============================================================================
 # JITTER TESTS
@@ -566,68 +570,68 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff exponential --jitter 0.2 --base-delay 10ms --max-tries 3 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff exponential --jitter 0.2 --base-delay 10ms --max-tries 3 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-jitter-with-linear
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff linear --jitter 0.5 --base-delay 10ms --increment 5ms --max-tries 2 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff linear --jitter 0.5 --base-delay 10ms --increment 5ms --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-jitter-with-fibonacci
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff fibonacci -j 0.1 --base-delay 10ms --max-tries 2 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff fibonacci -j 0.1 --base-delay 10ms --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-jitter-with-custom
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff custom --delays "10ms,20ms" --jitter 0.3 --max-tries 2 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff custom --delays "10ms,20ms" --jitter 0.3 --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-jitter-zero-has-no-effect
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff fixed --delay 10ms --jitter 0.0 --max-tries 2 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff fixed --delay 10ms --jitter 0.0 --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-jitter-max-value
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff fixed --delay 10ms --jitter 1.0 --max-tries 2 "false"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff fixed --delay 10ms --jitter 1.0 --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-jitter-invalid-negative
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff fixed --jitter -0.5 "echo test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff fixed --jitter -0.5 "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "jitter must be between 0.0 and 1.0"
@@ -636,8 +640,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --backoff fixed --jitter 1.5 "echo test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --backoff fixed --jitter 1.5 "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "jitter must be between 0.0 and 1.0"
@@ -650,31 +654,31 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      RETRY_INCREMENT=10ms go run cmd/* --backoff linear --base-delay 5ms --max-tries 2 "false"
+      cd {{.venom.testsuite.workdir}}
+      RETRY_INCREMENT=10ms go run ../cmd --backoff linear --base-delay 5ms --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-env-jitter
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      RETRY_JITTER=0.25 go run cmd/* --backoff fixed --delay 10ms --max-tries 2 "false"
+      cd {{.venom.testsuite.workdir}}
+      RETRY_JITTER=0.25 go run ../cmd --backoff fixed --delay 10ms --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-env-delays
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      RETRY_DELAYS="5ms,10ms,20ms" go run cmd/* --backoff custom --max-tries 2 "false"
+      cd {{.venom.testsuite.workdir}}
+      RETRY_DELAYS="5ms,10ms,20ms" go run ../cmd --backoff custom --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 # =============================================================================
 # STOP CONDITION TESTS
@@ -684,131 +688,131 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --stop-on-exit "1,2" --max-tries 5 "sh -c 'exit 1'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --stop-on-exit "1,2" --max-tries 5 "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "msg=Try:"
-    - result.systemout ShouldContainSubstring "return code"
+    - result.systemout ShouldContainSubstring "Attempting command"
+    - result.systemout ShouldContainSubstring "✗ Failed with exit code 1"
     - result.systemerr ShouldContainSubstring "retry failed"
 
 - name: test-stop-on-exit-code-no-match
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --stop-on-exit "3,4" --max-tries 2 "sh -c 'exit 1'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --stop-on-exit "3,4" --max-tries 2 "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
     - result.systemerr ShouldContainSubstring "max tries reached"
 
 - name: test-stop-on-exit-code-success-continues
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --stop-on-exit "1,2" "echo success"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --stop-on-exit "1,2" "echo success"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "success"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-stop-when-output-contains-match
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --stop-when-contains "success" --max-tries 5 "echo 'operation success completed'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --stop-when-contains "success" --max-tries 5 "echo 'operation success completed'"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "operation success completed"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-stop-when-output-contains-no-match
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --stop-when-contains "success" --max-tries 2 "echo 'operation failed'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --stop-when-contains "success" --max-tries 2 "echo 'operation failed'"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "operation failed"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-stop-when-output-not-contains-match
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --stop-when-not-contains "error" --max-tries 5 "echo 'operation completed successfully'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --stop-when-not-contains "error" --max-tries 5 "echo 'operation completed successfully'"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "operation completed successfully"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-stop-when-output-not-contains-no-match
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --stop-when-not-contains "error" --max-tries 2 "sh -c 'echo error occurred; exit 1'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --stop-when-not-contains "error" --max-tries 2 "sh -c 'echo error occurred; exit 1'"
     assertions:
     - result.code ShouldEqual 1
     - result.systemout ShouldContainSubstring "error occurred"
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
 
 - name: test-stop-when-output-regex-pattern
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --stop-when-contains "\\d+ files processed" --max-tries 5 "echo 'Successfully processed 42 files processed'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --stop-when-contains "\\d+ files processed" --max-tries 5 "echo 'Successfully processed 42 files processed'"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "42 files processed"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-timeout-condition
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --timeout 100ms --delay 50ms "sh -c 'sleep 0.2; echo done'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --timeout 100ms --delay 50ms "sh -c 'sleep 0.2; echo done'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
     - result.systemerr ShouldContainSubstring "context error"
 
 - name: test-timeout-condition-success-before-timeout
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --timeout 1s "echo quick success"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --timeout 1s "echo quick success"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "quick success"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-stop-at-time-future
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
+      cd {{.venom.testsuite.workdir}}
       # Test with a time far in the future (23:59) - should not stop immediately
-      go run cmd/* --stop-at "23:59" --max-tries 2 "echo time test"
+      go run ../cmd --stop-at "23:59" --max-tries 2 "echo time test"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "time test"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-invalid-exit-codes
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --stop-on-exit "invalid,1" "echo test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --stop-on-exit "invalid,1" "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "invalid exit code"
@@ -817,8 +821,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --timeout "invalid" "echo test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --timeout "invalid" "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "invalid timeout format"
@@ -827,8 +831,8 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --stop-at "25:00" "echo test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --stop-at "25:00" "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "invalid time format"
@@ -841,53 +845,141 @@ testcases:
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --max-tries 1 --stop-on-exit "1" --condition-logic "and" "sh -c 'exit 1'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --max-tries 1 --stop-on-exit "1" --condition-logic "and" "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
     - result.systemerr ShouldContainSubstring "max tries reached"
 
 - name: test-composite-or-logic-one-match
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --max-tries 5 --stop-on-exit "1" --condition-logic "or" "sh -c 'exit 1'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --max-tries 5 --stop-on-exit "1" --condition-logic "or" "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
     - result.systemerr ShouldContainSubstring "retry failed"
 
 - name: test-composite-multiple-conditions
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --max-tries 10 --stop-on-exit "2" --stop-when-contains "success" --condition-logic "or" "echo 'operation success'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --max-tries 10 --stop-on-exit "2" --stop-when-contains "success" --condition-logic "or" "echo 'operation success'"
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "operation success"
-    - result.systemout ShouldContainSubstring "Command executed successfully"
+    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-composite-timeout-with-max-tries
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --timeout 200ms --max-tries 10 --delay 50ms --condition-logic "or" "sh -c 'sleep 0.3; echo done'"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --timeout 200ms --max-tries 10 --delay 50ms --condition-logic "or" "sh -c 'sleep 0.3; echo done'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "attempt n°"
+    - result.systemout ShouldContainSubstring "Attempting command"
     - result.systemerr ShouldContainSubstring "context error"
 
 - name: test-invalid-condition-logic
   steps:
   - type: exec
     script: |
-      cd {{.venom.testsuite.workdir}}/..
-      go run cmd/* --condition-logic "invalid" "echo test"
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --condition-logic "invalid" "echo test"
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "invalid condition logic"
+
+# =============================================================================
+# ENHANCED LOGGING TESTS
+# =============================================================================
+
+- name: test-enhanced-logging-normal-mode
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --max-tries 2 "echo 'Enhanced logging test'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "[1/2] Attempting command..."
+    - result.systemout ShouldContainSubstring "│ Enhanced logging test"
+    - result.systemout ShouldContainSubstring "✓ Success"
+    - result.systemout ShouldContainSubstring "SUMMARY"
+
+- name: test-quiet-retries-mode
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --quiet-retries --max-tries 3 "sh -c 'echo attempt output; exit 1'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "[1/3] Attempting command..."
+    - result.systemout ShouldContainSubstring "[3/3] Retrying..."
+    - result.systemout ShouldContainSubstring "│ attempt output"
+    - result.systemout ShouldContainSubstring "SUMMARY"
+
+- name: test-summary-only-mode
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --summary-only --max-tries 2 "echo 'test output'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldNotContainSubstring "[1/2]"
+    - result.systemout ShouldNotContainSubstring "test output"
+    - result.systemout ShouldNotContainSubstring "SUMMARY"
+
+- name: test-verbose-output-mode
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --verbose-output --max-tries 2 "echo 'verbose test'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "SUMMARY"
+    - result.systemout ShouldContainSubstring "Backoff strategy:"
+    - result.systemout ShouldContainSubstring "Command:"
+
+- name: test-no-color-mode
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --no-color --max-tries 2 "echo 'no color test'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "[1/2] Attempting command..."
+    - result.systemout ShouldContainSubstring "│ no color test"
+
+- name: test-retry-delay-logging
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --max-tries 2 --delay 100ms "sh -c 'exit 1'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "Waiting 100ms before retry..."
+    - result.systemout ShouldContainSubstring "[2/2] Retrying..."
+
+- name: test-enhanced-logging-with-stop-conditions
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --stop-when-contains "done" --max-tries 3 "echo 'task done successfully'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "Attempting command"
+    - result.systemout ShouldContainSubstring "│ task done successfully"
+    - result.systemout ShouldContainSubstring "✓ Success"
 
