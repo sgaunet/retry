@@ -2,6 +2,7 @@ package retry
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"strings"
 )
@@ -22,14 +23,14 @@ func NewPrefixWriter(logger *Logger, isStderr bool) *PrefixWriter {
 }
 
 // Write implements io.Writer, processing lines and passing them to the logger.
-func (pw *PrefixWriter) Write(p []byte) (n int, err error) {
+func (pw *PrefixWriter) Write(p []byte) (int, error) {
 	// Add new data to buffer
 	pw.buffer.Write(p)
 	
 	// Process complete lines from the buffer
 	for {
 		line, err := pw.buffer.ReadString('\n')
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			// No complete line, put the partial line back and wait for more data
 			if line != "" {
 				remaining := pw.buffer.Bytes()

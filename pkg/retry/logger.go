@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,17 +15,30 @@ import (
 type LogLevel int
 
 const (
+	// LogLevelQuiet shows minimal output.
 	LogLevelQuiet LogLevel = iota
+	// LogLevelNormal shows standard output.
 	LogLevelNormal
+	// LogLevelVerbose shows detailed output.
 	LogLevelVerbose
+)
+
+const (
+	// summaryHeaderLength defines the length of summary header separators.
+	summaryHeaderLength = 15
+	// summaryTotalLength defines the total length of the summary footer.
+	summaryTotalLength = 41
 )
 
 // OutputMode represents different output formatting modes.
 type OutputMode int
 
 const (
+	// OutputModeNormal shows all output with full formatting.
 	OutputModeNormal OutputMode = iota
+	// OutputModeQuietRetries only shows output for the final attempt.
 	OutputModeQuietRetries
+	// OutputModeSummaryOnly shows only the execution summary.
 	OutputModeSummaryOnly
 )
 
@@ -82,22 +96,6 @@ func NewLogger(level LogLevel, mode OutputMode, noColor bool) *Logger {
 	return l
 }
 
-// setupColors initializes color functions based on noColor setting.
-func (l *Logger) setupColors() {
-	if l.noColor {
-		l.dimColor = color.New().SprintFunc()
-		l.successColor = color.New().SprintFunc()
-		l.errorColor = color.New().SprintFunc()
-		l.warnColor = color.New().SprintFunc()
-		l.boldColor = color.New().SprintFunc()
-	} else {
-		l.dimColor = color.New(color.FgHiBlack).SprintFunc()
-		l.successColor = color.New(color.FgGreen).SprintFunc()
-		l.errorColor = color.New(color.FgRed).SprintFunc()
-		l.warnColor = color.New(color.FgYellow).SprintFunc()
-		l.boldColor = color.New(color.Bold).SprintFunc()
-	}
-}
 
 // StartExecution begins tracking a new retry execution.
 func (l *Logger) StartExecution(command string, maxAttempts int, backoffStrategy string) {
@@ -126,10 +124,10 @@ func (l *Logger) StartAttempt(attempt int) {
 	
 	if attempt == 1 {
 		msg := fmt.Sprintf("%s %s", l.boldColor(attemptMsg), "Attempting command...")
-		fmt.Fprintln(l.out, msg)
+		_, _ = fmt.Fprintln(l.out, msg)
 	} else {
 		msg := fmt.Sprintf("%s %s", l.boldColor(attemptMsg), "Retrying...")
-		fmt.Fprintln(l.out, msg)
+		_, _ = fmt.Fprintln(l.out, msg)
 	}
 }
 
@@ -153,7 +151,7 @@ func (l *Logger) LogCommandOutput(line string, isStderr bool) {
 		output = line
 	}
 	
-	fmt.Fprintf(l.out, "%s%s\n", prefix, output)
+	_, _ = fmt.Fprintf(l.out, "%s%s\n", prefix, output)
 }
 
 // EndAttempt logs the result of an attempt.
@@ -171,10 +169,10 @@ func (l *Logger) EndAttempt(exitCode int, success bool) {
 		statusMsg = l.errorColor(fmt.Sprintf("✗ Failed with exit code %d", exitCode))
 	}
 	
-	fmt.Fprintln(l.out, statusMsg)
+	_, _ = fmt.Fprintln(l.out, statusMsg)
 	
 	if !success && l.currentAttempt < l.maxAttempts {
-		fmt.Fprintln(l.out) // Add blank line between attempts
+		_, _ = fmt.Fprintln(l.out) // Add blank line between attempts
 	}
 }
 
@@ -186,7 +184,7 @@ func (l *Logger) LogRetryDelay(delay time.Duration) {
 	
 	if delay > 0 {
 		msg := l.dimColor(fmt.Sprintf("Waiting %v before retry...", delay))
-		fmt.Fprintln(l.out, msg)
+		_, _ = fmt.Fprintln(l.out, msg)
 	}
 }
 
@@ -203,18 +201,60 @@ func (l *Logger) EndExecution(success bool, failureReason string, stopCondition 
 	l.printSummary()
 }
 
+
+// Info logs an informational message.
+func (l *Logger) Info(msg string) {
+	if l.level == LogLevelQuiet || l.mode == OutputModeSummaryOnly {
+		return
+	}
+	_, _ = fmt.Fprintln(l.out, msg)
+}
+
+// Error logs an error message.
+func (l *Logger) Error(msg string) {
+	if l.level == LogLevelQuiet {
+		return
+	}
+	_, _ = fmt.Fprintln(l.err, l.errorColor(msg))
+}
+
+// Verbose logs a verbose message.
+func (l *Logger) Verbose(msg string) {
+	if l.level != LogLevelVerbose || l.mode == OutputModeSummaryOnly {
+		return
+	}
+	_, _ = fmt.Fprintln(l.out, l.dimColor(msg))
+}
+
+// setupColors initializes color functions based on noColor setting.
+func (l *Logger) setupColors() {
+	if l.noColor {
+		l.dimColor = color.New().SprintFunc()
+		l.successColor = color.New().SprintFunc()
+		l.errorColor = color.New().SprintFunc()
+		l.warnColor = color.New().SprintFunc()
+		l.boldColor = color.New().SprintFunc()
+	} else {
+		l.dimColor = color.New(color.FgHiBlack).SprintFunc()
+		l.successColor = color.New(color.FgGreen).SprintFunc()
+		l.errorColor = color.New(color.FgRed).SprintFunc()
+		l.warnColor = color.New(color.FgYellow).SprintFunc()
+		l.boldColor = color.New(color.Bold).SprintFunc()
+	}
+}
+
 // printSummary prints the final execution summary.
 func (l *Logger) printSummary() {
 	if l.level == LogLevelQuiet {
 		return
 	}
 	
-	fmt.Fprintln(l.out)
+	_, _ = fmt.Fprintln(l.out)
 	
 	// Summary header
-	headerLine := strings.Repeat("═", 15)
+	headerLine := strings.Repeat("═", summaryHeaderLength)
 	header := fmt.Sprintf("%s SUMMARY %s", headerLine, headerLine)
-	fmt.Fprintln(l.out, l.boldColor(header))
+	_, _ = fmt.Fprintln(l.out, l.boldColor(header))
 	
 	// Result
 	var resultMsg string
@@ -227,61 +267,37 @@ func (l *Logger) printSummary() {
 		}
 		resultMsg = l.errorColor(fmt.Sprintf("Failed (%s)", reason))
 	}
-	fmt.Fprintf(l.out, "Result: %s\n", resultMsg)
+	_, _ = fmt.Fprintf(l.out, "Result: %s\n", resultMsg)
 	
 	// Attempts
 	var attemptsStr string
 	if l.summary.MaxAttempts > 0 {
 		attemptsStr = fmt.Sprintf("%d/%d", l.summary.TotalAttempts, l.summary.MaxAttempts)
 	} else {
-		attemptsStr = fmt.Sprintf("%d", l.summary.TotalAttempts)
+		attemptsStr = strconv.Itoa(l.summary.TotalAttempts)
 	}
-	fmt.Fprintf(l.out, "Attempts: %s\n", attemptsStr)
+	_, _ = fmt.Fprintf(l.out, "Attempts: %s\n", attemptsStr)
 	
 	// Duration
-	fmt.Fprintf(l.out, "Duration: %v\n", l.summary.TotalDuration.Round(time.Millisecond))
+	_, _ = fmt.Fprintf(l.out, "Duration: %v\n", l.summary.TotalDuration.Round(time.Millisecond))
 	
 	// Final exit code
-	fmt.Fprintf(l.out, "Final exit code: %d\n", l.summary.FinalExitCode)
+	_, _ = fmt.Fprintf(l.out, "Final exit code: %d\n", l.summary.FinalExitCode)
 	
 	// Stop condition (if applicable)
 	if l.summary.StopCondition != "" {
-		fmt.Fprintf(l.out, "Stop condition: %s\n", l.summary.StopCondition)
+		_, _ = fmt.Fprintf(l.out, "Stop condition: %s\n", l.summary.StopCondition)
 	}
 	
 	// Backoff strategy (if verbose)
 	if l.level == LogLevelVerbose && l.summary.BackoffStrategy != "" {
-		fmt.Fprintf(l.out, "Backoff strategy: %s\n", l.summary.BackoffStrategy)
+		_, _ = fmt.Fprintf(l.out, "Backoff strategy: %s\n", l.summary.BackoffStrategy)
 	}
 	
 	// Command (if verbose)
 	if l.level == LogLevelVerbose {
-		fmt.Fprintf(l.out, "Command: %s\n", l.summary.Command)
+		_, _ = fmt.Fprintf(l.out, "Command: %s\n", l.summary.Command)
 	}
 	
-	fmt.Fprintln(l.out, strings.Repeat("═", 41))
-}
-
-// Info logs an informational message.
-func (l *Logger) Info(msg string) {
-	if l.level == LogLevelQuiet || l.mode == OutputModeSummaryOnly {
-		return
-	}
-	fmt.Fprintln(l.out, msg)
-}
-
-// Error logs an error message.
-func (l *Logger) Error(msg string) {
-	if l.level == LogLevelQuiet {
-		return
-	}
-	fmt.Fprintln(l.err, l.errorColor(msg))
-}
-
-// Verbose logs a verbose message.
-func (l *Logger) Verbose(msg string) {
-	if l.level != LogLevelVerbose || l.mode == OutputModeSummaryOnly {
-		return
-	}
-	fmt.Fprintln(l.out, l.dimColor(msg))
+	_, _ = fmt.Fprintln(l.out, strings.Repeat("═", summaryTotalLength))
 }
