@@ -155,43 +155,11 @@ func runRetry(cmd *cobra.Command, args []string) error {
 
 	// Parse configuration
 	finalMaxTries := parseMaxTries(cmd)
-	
-	// Parse backoff strategy
-	backoffType := getBackoffType(cmd)
-	var backoffStrategy retry.BackoffStrategy
-	var err error
-	
-	switch backoffType {
-	case "fixed":
-		backoffStrategy, err = parseFixedBackoff(cmd)
-	case "exponential", "exp":
-		backoffStrategy, err = parseExponentialBackoff(cmd)
-	case "linear":
-		backoffStrategy, err = parseLinearBackoff(cmd)
-	case "fibonacci", "fib":
-		backoffStrategy, err = parseFibonacciBackoff(cmd)
-	case "custom":
-		backoffStrategy, err = parseCustomBackoff(cmd)
-	default:
-		return fmt.Errorf("%w: %s", ErrUnsupportedBackoff, backoffType)
-	}
-	
-	if err != nil {
-		return err
-	}
-	
-	// Apply jitter if specified
-	jitterWrapper, err := applyJitter(cmd, backoffStrategy)
-	if err != nil {
-		return err
-	}
-	if jitterWrapper != nil {
-		backoffStrategy = jitterWrapper
-	}
 
-	// Create and run retry
-	return createAndRunRetry(commandStr, finalMaxTries, backoffStrategy, logger)
+	// Create and run retry with strategy building inside
+	return createAndRunRetryWithStrategy(commandStr, finalMaxTries, cmd, logger)
 }
+
 
 func parseMaxTries(cmd *cobra.Command) uint {
 	finalMaxTries := maxTries
@@ -310,10 +278,10 @@ func parseMultiplier(cmd *cobra.Command) (float64, error) {
 	return mult, nil
 }
 
-func createAndRunRetry(
+func createAndRunRetryWithStrategy(
 	commandStr string,
 	finalMaxTries uint,
-	backoffStrategy retry.BackoffStrategy,
+	cmd *cobra.Command,
 	logger *slog.Logger,
 ) error {
 	// Create retry instance
@@ -322,16 +290,62 @@ func createAndRunRetry(
 		return fmt.Errorf("failed to create retry instance: %w", err)
 	}
 
-	// Set backoff strategy
-	r.SetBackoffStrategy(backoffStrategy)
-
-	// Run the retry
+	// Build strategy
+	strategy, err := buildStrategy(cmd)
+	if err != nil {
+		return err
+	}
+	
+	// Set backoff strategy and run
+	r.SetBackoffStrategy(strategy)
 	err = r.Run(logger)
 	if err != nil {
 		return fmt.Errorf("retry failed: %w", err)
 	}
 
 	return nil
+}
+
+//nolint:ireturn // Strategy pattern requires interface return for polymorphism
+func buildStrategy(cmd *cobra.Command) (retry.BackoffStrategy, error) {
+	backoffType := getBackoffType(cmd)
+	var strategy retry.BackoffStrategy
+	var err error
+	
+	switch backoffType {
+	case "fixed":
+		strategy, err = parseFixedBackoff(cmd)
+	case "exponential", "exp":
+		strategy, err = parseExponentialBackoff(cmd)
+	case "linear":
+		strategy, err = parseLinearBackoff(cmd)
+	case "fibonacci", "fib":
+		strategy, err = parseFibonacciBackoff(cmd)
+	case "custom":
+		strategy, err = parseCustomBackoff(cmd)
+	default:
+		return nil, fmt.Errorf("%w: %s", ErrUnsupportedBackoff, backoffType)
+	}
+	
+	if err != nil {
+		return nil, fmt.Errorf("failed to create backoff strategy: %w", err)
+	}
+	
+	return applyJitter(cmd, strategy)
+}
+
+//nolint:ireturn // May wrap strategy with jitter, requires interface return
+func applyJitter(cmd *cobra.Command, strategy retry.BackoffStrategy) (retry.BackoffStrategy, error) {
+	jitterValue := getJitterValue(cmd)
+	if jitterValue == 0 {
+		return strategy, nil
+	}
+	
+	if jitterValue < 0 || jitterValue > 1 {
+		return nil, ErrInvalidJitter
+	}
+	
+	return retry.NewJitterBackoff(strategy, jitterValue), nil
 }
 
 func parseLinearBackoff(cmd *cobra.Command) (*retry.LinearBackoff, error) {
@@ -402,25 +416,16 @@ func parseCustomBackoff(cmd *cobra.Command) (*retry.CustomBackoff, error) {
 	return retry.NewCustomBackoff(parsedDelays), nil
 }
 
-func applyJitter(cmd *cobra.Command, strategy retry.BackoffStrategy) (*retry.JitterBackoff, error) {
+func getJitterValue(cmd *cobra.Command) float64 {
 	jitterValue := jitter
 	if !cmd.Flags().Changed("jitter") {
 		if envJitter := viper.GetFloat64("jitter"); envJitter != 0 {
 			jitterValue = envJitter
 		}
 	}
-	
-	if jitterValue == 0 {
-		// Return nil to indicate no jitter wrapper needed
-		return nil, nil
-	}
-	
-	if jitterValue < 0 || jitterValue > 1 {
-		return nil, ErrInvalidJitter
-	}
-	
-	return retry.NewJitterBackoff(strategy, jitterValue), nil
+	return jitterValue
 }
+
 
 func main() {
 	err := rootCmd.Execute()
