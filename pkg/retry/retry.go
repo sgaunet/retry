@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/go-andiamo/splitter"
@@ -23,11 +24,15 @@ var (
 	ErrMaxTriesReached = errors.New("max tries reached")
 	// ErrEmptyCommand is returned when the command is empty.
 	ErrEmptyCommand = errors.New("empty command")
+	// ErrCommandTerminatedBySignal is returned when the command is terminated by signal.
+	ErrCommandTerminatedBySignal = errors.New("command terminated by signal")
 )
 
 const (
 	// outputStreams represents the number of output streams (stdout and stderr).
 	outputStreams = 2
+	// signalExitCodeBase is the base value for signal exit codes (128).
+	signalExitCodeBase = 128
 )
 
 // Retry is a struct that represents a retry mechanism for executing commands.
@@ -79,15 +84,22 @@ func (r *Retry) GetSuccessConditions() []ConditionRetryer {
 // It returns an error if the command fails or if the maximum number of tries is reached.
 // It also logs the output of the command to the provided logger.
 func (r *Retry) Run(_ *slog.Logger) error {
-	return r.RunWithEnhancedLogger(nil)
+	return r.RunWithEnhancedLogger(context.TODO(), nil)
 }
 
 
 // RunWithEnhancedLogger executes the command with enhanced logging support.
-func (r *Retry) RunWithEnhancedLogger(logger *Logger) error {
+// The context parameter allows for cancellation and timeout control from the caller.
+//
+//nolint:contextcheck // Context is properly used for cancellation
+func (r *Retry) RunWithEnhancedLogger(ctx context.Context, logger *Logger) error {
+	// If no context is provided, use background context for backward compatibility
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	r.initializeLogging(logger)
 	
-	err := r.executeRetryLoop(logger)
+	err := r.executeRetryLoop(ctx, logger)
 	
 	failureReason, stopCondition := r.determineFailureReason()
 	
@@ -95,17 +107,26 @@ func (r *Retry) RunWithEnhancedLogger(logger *Logger) error {
 		logger.EndExecution(err == nil, failureReason, stopCondition)
 	}
 
-	return r.getFinalError(err)
+	return r.getFinalError(ctx, err)
 }
 
 // shouldContinue checks if the retry loop should continue.
-func (r *Retry) shouldContinue() bool {
+func (r *Retry) shouldContinue(ctx context.Context) bool {
+	// Check if the root context (signal handling) is cancelled first
+	if ctx.Err() != nil {
+		return false
+	}
 	return r.condition.GetCtx().Err() == nil && !r.condition.IsLimitReached()
 }
 
 
 // getFinalError determines the final error to return.
-func (r *Retry) getFinalError(err error) error {
+func (r *Retry) getFinalError(ctx context.Context, err error) error {
+	// Check root context first (signal handling)
+	if ctx.Err() != nil {
+		return fmt.Errorf("context error: %w", ctx.Err())
+	}
+	
 	if r.condition.GetCtx().Err() != nil {
 		return fmt.Errorf("context error: %w", r.condition.GetCtx().Err())
 	}
@@ -140,7 +161,7 @@ func (r *Retry) getLastExitCode() int {
 }
 
 // executeSingleTryWithLogger executes a single retry attempt with enhanced logging.
-func (r *Retry) executeSingleTryWithLogger(logger *Logger) error {
+func (r *Retry) executeSingleTryWithLogger(ctx context.Context, logger *Logger) error {
 	if r.condition != nil {
 		r.condition.StartTry()
 	}
@@ -151,7 +172,7 @@ func (r *Retry) executeSingleTryWithLogger(logger *Logger) error {
 	}
 	r.tries++
 	
-	rc, stdout, stderr, err := execCommandWithOutputAndLogger(r.condition.GetCtx(), r.cmd, logger)
+	rc, stdout, stderr, err := execCommandWithOutputAndLogger(ctx, r.cmd, logger)
 	r.lastExitCode = rc
 
 	// Pass exit code and output to enhanced conditions
@@ -224,6 +245,28 @@ func getExitCode(err error) int {
 	return -1
 }
 
+// checkSignalTermination checks if the process was terminated by a signal and returns appropriate exit code.
+func checkSignalTermination(c *exec.Cmd, err error) (int, error) {
+	if c.ProcessState == nil || c.ProcessState.Success() {
+		return 0, nil
+	}
+	
+	var exitError *exec.ExitError
+	if !errors.As(err, &exitError) {
+		return 0, nil
+	}
+	
+	status, ok := exitError.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() {
+		return 0, nil
+	}
+	
+	// Process was terminated by signal, return appropriate exit code
+	signalExitCode := signalExitCodeBase + int(status.Signal())
+	signalErr := fmt.Errorf("%w: %v", ErrCommandTerminatedBySignal, status.Signal())
+	return signalExitCode, signalErr
+}
+
 func execCommandWithOutputAndLogger(ctx context.Context, cmd string, logger *Logger) (int, string, string, error) {
 	splitCmd, err := parseCommand(cmd)
 	if err != nil {
@@ -231,6 +274,12 @@ func execCommandWithOutputAndLogger(ctx context.Context, cmd string, logger *Log
 	}
 	
 	c := exec.CommandContext(ctx, splitCmd[0], splitCmd[1:]...) //nolint:gosec
+	
+	// Set up process group for better signal handling
+	c.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+	
 	return executeCommandWithPipes(c, logger)
 }
 
@@ -278,6 +327,9 @@ func waitForCommandCompletion(c *exec.Cmd, stdout, stderr io.ReadCloser, logger 
 		}
 	}()
 	
+	// Wait for command to complete
+	// The context cancellation will automatically terminate the process
+	// since we used exec.CommandContext
 	err := c.Wait()
 	_ = stderr.Close()
 	_ = stdout.Close()
@@ -287,6 +339,12 @@ func waitForCommandCompletion(c *exec.Cmd, stdout, stderr io.ReadCloser, logger 
 	stderrStr := stderrBuf.String()
 	
 	exitCode := getExitCode(err)
+	
+	// Check if the process was terminated by a signal
+	if signalExitCode, signalErr := checkSignalTermination(c, err); signalExitCode != 0 {
+		return signalExitCode, stdoutStr, stderrStr, signalErr
+	}
+	
 	if err != nil {
 		return exitCode, stdoutStr, stderrStr, fmt.Errorf("command failed: %w", err)
 	}
@@ -334,15 +392,15 @@ func (r *Retry) extractMaxTriesFromCondition() int {
 }
 
 // executeRetryLoop runs the main retry loop logic.
-func (r *Retry) executeRetryLoop(logger *Logger) error {
+func (r *Retry) executeRetryLoop(ctx context.Context, logger *Logger) error {
 	var err error
 	
-	for r.shouldContinue() {
+	for r.shouldContinue(ctx) {
 		if logger != nil {
 			logger.StartAttempt(r.tries + 1)
 		}
 
-		err = r.executeSingleTryWithLogger(logger)
+		err = r.executeSingleTryWithLogger(ctx, logger)
 		
 		// Check if this is a success condition (even if err != nil)
 		// Success conditions that have IsLimitReached() == true mean success was achieved

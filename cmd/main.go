@@ -2,10 +2,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sgaunet/retry/pkg/retry"
@@ -16,6 +19,10 @@ import (
 const (
 	defaultMaxTries    = 3
 	defaultMultiplier  = 2.0
+	
+	// Exit codes for signal handling.
+	exitCodeSIGINT  = 130 // 128 + 2
+	exitCodeSIGTERM = 143 // 128 + 15
 )
 
 var (
@@ -46,6 +53,9 @@ var (
 	increment   string
 	jitter      float64
 	delays      string
+	
+	// Root context for signal handling.
+	rootContext context.Context
 	
 	// New stop condition flags.
 	timeout              string
@@ -595,7 +605,7 @@ func createAndRunRetryWithEnhancedLogging(
 	
 	// Set backoff strategy and run with enhanced logging
 	r.SetBackoffStrategy(strategy)
-	err = r.RunWithEnhancedLogger(logger)
+	err = r.RunWithEnhancedLogger(rootContext, logger)
 	if err != nil {
 		return fmt.Errorf("retry failed: %w", err)
 	}
@@ -1114,8 +1124,48 @@ func isSuccessCondition(condition retry.ConditionRetryer) bool {
 }
 
 func main() {
+	// Create a root context that can be cancelled on signal
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	
+	// Set up signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	
+	// Variable to track which signal was received for proper exit code
+	var receivedSignal os.Signal
+	
+	// Start signal handler in a goroutine
+	go func() {
+		sig := <-sigChan
+		receivedSignal = sig
+		fmt.Fprintf(os.Stderr, "\nReceived signal %v, shutting down gracefully...\n", sig)
+		cancel()
+	}()
+	
+	// Store context in a global variable so it can be accessed by command handlers
+	// Note: This is needed for signal handling coordination across the application
+	rootContext = ctx //nolint:fatcontext // Global context needed for signal handling
+	
 	err := rootCmd.Execute()
 	if err != nil {
+		// Check if the error is due to context cancellation (signal received)
+		if errors.Is(err, context.Canceled) {
+			// Return appropriate exit code based on signal type
+			// Note: exitAfterDefer is intentional - we want immediate exit on signals
+			switch receivedSignal {
+			case syscall.SIGINT:
+				fmt.Fprintln(os.Stderr, "Operation cancelled by user")
+				os.Exit(exitCodeSIGINT) //nolint:gocritic // Intentional immediate exit for signal handling
+			case syscall.SIGTERM:
+				fmt.Fprintln(os.Stderr, "Operation terminated")
+				os.Exit(exitCodeSIGTERM) //nolint:gocritic // Intentional immediate exit for signal handling
+			default:
+				fmt.Fprintln(os.Stderr, "Operation cancelled by signal")
+				os.Exit(1) //nolint:gocritic // Intentional immediate exit for signal handling
+			}
+		}
+		
 		// Show usage for command syntax errors, but not for retry failures
 		if errors.Is(err, ErrCommandRequired) || errors.Is(err, ErrCommandEmpty) {
 			fmt.Fprintln(os.Stderr, err)
