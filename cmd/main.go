@@ -55,6 +55,15 @@ var (
 	stopAt               string
 	conditionLogic       string
 	
+	// Success/Failure condition flags (Issue #22).
+	retryOnExit      string
+	successOnExit    string
+	retryIfContains  string
+	successContains  string
+	failIfContains   string
+	successRegex     string
+	retryRegex       string
+	
 	// Output control flags.
 	quietRetries  bool
 	noColor       bool
@@ -126,7 +135,26 @@ if it contains spaces or special characters.`,
   retry --log-file retry.log "important-command"
   
   # Debug logging level
-  retry --log-level debug "troublesome-command"`,
+  retry --log-level debug "troublesome-command"
+  
+  # Success/Failure Conditions (Issue #22)
+  # Only retry on specific exit codes
+  retry --retry-on-exit "1,2,124" "flaky-service"
+  
+  # Consider exit code 2 as success
+  retry --success-on-exit "0,2" "special-command"
+  
+  # Retry if output contains temporary error
+  retry --retry-if-contains "temporary error" "api-call"
+  
+  # Success if output contains 200 OK
+  retry --success-contains "200 OK" "curl https://api.example.com"
+  
+  # Fail immediately on fatal error
+  retry --fail-if-contains "fatal error" "deployment"
+  
+  # Success based on regex match
+  retry --success-regex "HTTP/1.1 [23][0-9][0-9]" "curl -I https://api.com"`,
 	Args: func(_ *cobra.Command, args []string) error {
 		// Check if command is provided as positional argument
 		if len(args) > 0 {
@@ -176,6 +204,28 @@ func setupStopConditionFlags() {
 	rootCmd.Flags().StringVar(&conditionLogic, "condition-logic", "OR", "logic for multiple conditions (AND or OR)")
 }
 
+func setupSuccessFailureFlags() {
+	// Exit code conditions
+	rootCmd.Flags().StringVar(&retryOnExit, "retry-on-exit", "", 
+		"only retry on specific exit codes (comma-separated)")
+	rootCmd.Flags().StringVar(&successOnExit, "success-on-exit", "", 
+		"consider these exit codes as success (comma-separated)")
+	
+	// Pattern-based conditions
+	rootCmd.Flags().StringVar(&retryIfContains, "retry-if-contains", "", 
+		"retry if output contains pattern")
+	rootCmd.Flags().StringVar(&successContains, "success-contains", "", 
+		"success if output contains pattern")
+	rootCmd.Flags().StringVar(&failIfContains, "fail-if-contains", "", 
+		"fail immediately if pattern found")
+	
+	// Regex conditions
+	rootCmd.Flags().StringVar(&successRegex, "success-regex", "", 
+		"success if output matches regex")
+	rootCmd.Flags().StringVar(&retryRegex, "retry-regex", "", 
+		"retry if output matches regex")
+}
+
 func setupOutputFlags() {
 	rootCmd.Flags().BoolVar(&quietRetries, "quiet-retries", false, "only show command output on final attempt")
 	rootCmd.Flags().BoolVar(&noColor, "no-color", false, "disable colored output")
@@ -200,6 +250,8 @@ func bindFlagsToViper() {
 		"max-tries", "delay", "verbose", "backoff", "base-delay", "max-delay",
 		"multiplier", "increment", "jitter", "delays", "timeout", "stop-on-exit",
 		"stop-when-contains", "stop-when-not-contains", "stop-at", "condition-logic",
+		"retry-on-exit", "success-on-exit", "retry-if-contains", "success-contains",
+		"fail-if-contains", "success-regex", "retry-regex",
 		"quiet-retries", "no-color", "summary-only", "verbose-output",
 		"quiet", "json", "log-file", "log-level",
 	}
@@ -215,6 +267,7 @@ func init() {
 	setupBasicFlags()
 	setupBackoffFlags()
 	setupStopConditionFlags()
+	setupSuccessFailureFlags()
 	setupOutputFlags()
 	
 	setupEnvironmentBindings()
@@ -522,11 +575,17 @@ func createAndRunRetryWithEnhancedLogging(
 		return fmt.Errorf("failed to build stop conditions: %w", err)
 	}
 
+	// Separate success conditions from stop conditions
+	result := separateConditions(condition)
+	
 	// Create retry instance
-	r, err := retry.NewRetry(commandStr, condition)
+	r, err := retry.NewRetry(commandStr, result.stopCondition)
 	if err != nil {
 		return fmt.Errorf("failed to create retry instance: %w", err)
 	}
+	
+	// Set success conditions separately
+	r.SetSuccessConditions(result.successConditions)
 
 	// Build strategy
 	strategy, err := buildStrategy(cmd)
@@ -722,6 +781,13 @@ func collectConditions(cmd *cobra.Command, maxTries uint) ([]retry.ConditionRetr
 		conditions = append(conditions, timeCondition)
 	}
 	
+	// Add success/failure conditions (Issue #22)
+	successFailureConditions, err := addSuccessFailureConditions(cmd)
+	if err != nil {
+		return nil, err
+	}
+	conditions = append(conditions, successFailureConditions...)
+	
 	return conditions, nil
 }
 
@@ -856,6 +922,195 @@ func parseExitCodes(codesStr string) ([]int, error) {
 	}
 	
 	return codes, nil
+}
+
+func addSuccessFailureConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) {
+	var conditions []retry.ConditionRetryer
+	
+	// Handle exit code conditions
+	exitCodeConditions, err := addExitCodeConditions(cmd)
+	if err != nil {
+		return nil, err
+	}
+	conditions = append(conditions, exitCodeConditions...)
+	
+	// Handle pattern-based conditions
+	patternConditions, err := addPatternConditions(cmd)
+	if err != nil {
+		return nil, err
+	}
+	conditions = append(conditions, patternConditions...)
+	
+	// Handle regex conditions
+	regexConditions, err := addRegexConditions(cmd)
+	if err != nil {
+		return nil, err
+	}
+	conditions = append(conditions, regexConditions...)
+	
+	return conditions, nil
+}
+
+func addExitCodeConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) {
+	var conditions []retry.ConditionRetryer
+	
+	// Retry on exit codes
+	if retryOnExitValue := getValueOrEnv(cmd, "retry-on-exit", retryOnExit); retryOnExitValue != "" {
+		codes, err := parseExitCodes(retryOnExitValue)
+		if err != nil {
+			return nil, fmt.Errorf("invalid retry-on-exit codes: %w", err)
+		}
+		conditions = append(conditions, retry.NewRetryOnExitCode(codes))
+	}
+	
+	// Success on exit codes
+	if successOnExitValue := getValueOrEnv(cmd, "success-on-exit", successOnExit); successOnExitValue != "" {
+		codes, err := parseExitCodes(successOnExitValue)
+		if err != nil {
+			return nil, fmt.Errorf("invalid success-on-exit codes: %w", err)
+		}
+		conditions = append(conditions, retry.NewSuccessOnExitCode(codes))
+	}
+	
+	return conditions, nil
+}
+
+func addPatternConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) {
+	var conditions []retry.ConditionRetryer
+	
+	// Retry if contains
+	if retryIfContainsValue := getValueOrEnv(cmd, "retry-if-contains", retryIfContains); retryIfContainsValue != "" {
+		condition, err := retry.NewRetryIfContains(retryIfContainsValue)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create retry-if-contains condition: %w", err)
+		}
+		conditions = append(conditions, condition)
+	}
+	
+	// Success contains
+	if successContainsValue := getValueOrEnv(cmd, "success-contains", successContains); successContainsValue != "" {
+		condition, err := retry.NewSuccessContains(successContainsValue)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create success-contains condition: %w", err)
+		}
+		conditions = append(conditions, condition)
+	}
+	
+	// Fail if contains
+	if failIfContainsValue := getValueOrEnv(cmd, "fail-if-contains", failIfContains); failIfContainsValue != "" {
+		condition, err := retry.NewFailIfContains(failIfContainsValue)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create fail-if-contains condition: %w", err)
+		}
+		conditions = append(conditions, condition)
+	}
+	
+	return conditions, nil
+}
+
+func addRegexConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) {
+	var conditions []retry.ConditionRetryer
+	
+	// Success regex
+	if successRegexValue := getValueOrEnv(cmd, "success-regex", successRegex); successRegexValue != "" {
+		condition, err := retry.NewSuccessRegex(successRegexValue)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create success-regex condition: %w", err)
+		}
+		conditions = append(conditions, condition)
+	}
+	
+	// Retry regex
+	if retryRegexValue := getValueOrEnv(cmd, "retry-regex", retryRegex); retryRegexValue != "" {
+		condition, err := retry.NewRetryRegex(retryRegexValue)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create retry-regex condition: %w", err)
+		}
+		conditions = append(conditions, condition)
+	}
+	
+	return conditions, nil
+}
+
+func getValueOrEnv(cmd *cobra.Command, flagName string, flagValue string) string {
+	// If the flag was explicitly changed, use the flag value
+	if cmd.Flags().Changed(flagName) {
+		return flagValue
+	}
+	// Otherwise, check for environment variable via viper
+	if envValue := viper.GetString(flagName); envValue != "" {
+		return envValue
+	}
+	// Fall back to the flag value (which might be empty)
+	return flagValue
+}
+
+// conditionSeparationResult holds the result of separating conditions.
+type conditionSeparationResult struct {
+	stopCondition     retry.ConditionRetryer
+	successConditions []retry.ConditionRetryer
+}
+
+func separateConditions(condition retry.ConditionRetryer) conditionSeparationResult {
+	// If it's a composite condition, separate success from stop conditions
+	if comp, ok := condition.(*retry.CompositeCondition); ok {
+		return separateCompositeConditions(comp)
+	}
+	
+	// If it's a single success condition, return it as a success condition
+	if isSuccessCondition(condition) {
+		// Return a default stop condition (max tries = 1) and the success condition
+		return conditionSeparationResult{
+			stopCondition:     retry.NewStopOnMaxTries(1),
+			successConditions: []retry.ConditionRetryer{condition},
+		}
+	}
+	
+	// Otherwise, it's a stop condition
+	return conditionSeparationResult{
+		stopCondition:     condition,
+		successConditions: nil,
+	}
+}
+
+func separateCompositeConditions(comp *retry.CompositeCondition) conditionSeparationResult {
+	var stopConditions []retry.ConditionRetryer
+	var successConditions []retry.ConditionRetryer
+	
+	for _, cond := range comp.GetConditions() {
+		if isSuccessCondition(cond) {
+			successConditions = append(successConditions, cond)
+		} else {
+			stopConditions = append(stopConditions, cond)
+		}
+	}
+	
+	// Build final stop condition
+	var finalStopCondition retry.ConditionRetryer
+	switch len(stopConditions) {
+	case 0:
+		// No stop conditions, use default
+		finalStopCondition = retry.NewStopOnMaxTries(1)
+	case 1:
+		finalStopCondition = stopConditions[0]
+	default:
+		// Multiple stop conditions, recreate composite
+		finalStopCondition = retry.NewCompositeCondition(retry.LogicOR, stopConditions...)
+	}
+	
+	return conditionSeparationResult{
+		stopCondition:     finalStopCondition,
+		successConditions: successConditions,
+	}
+}
+
+func isSuccessCondition(condition retry.ConditionRetryer) bool {
+	switch condition.(type) {
+	case *retry.SuccessOnExitCode, *retry.SuccessContains, *retry.SuccessRegex:
+		return true
+	default:
+		return false
+	}
 }
 
 func main() {
