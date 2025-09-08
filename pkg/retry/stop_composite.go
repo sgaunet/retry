@@ -40,6 +40,10 @@ func (c *CompositeCondition) IsLimitReached() bool {
 	if c.logic == LogicAND {
 		// For AND logic, all conditions must be met
 		for _, condition := range c.conditions {
+			// Skip success conditions when checking stop limits
+			if c.isSuccessCondition(condition) {
+				continue
+			}
 			if !condition.IsLimitReached() {
 				return false
 			}
@@ -49,12 +53,17 @@ func (c *CompositeCondition) IsLimitReached() bool {
 	
 	// For OR logic (default), any condition being met stops retry
 	for _, condition := range c.conditions {
+		// Skip success conditions when checking stop limits
+		if c.isSuccessCondition(condition) {
+			continue
+		}
 		if condition.IsLimitReached() {
 			return true
 		}
 	}
 	return false
 }
+
 
 // StartTry calls StartTry on all sub-conditions.
 func (c *CompositeCondition) StartTry() {
@@ -91,4 +100,19 @@ func (c *CompositeCondition) SetLastOutput(stdout, stderr string) {
 // Cancel cancels the composite condition's context.
 func (c *CompositeCondition) Cancel() {
 	c.cancel()
+}
+
+// GetConditions returns the list of conditions for checking success conditions.
+func (c *CompositeCondition) GetConditions() []ConditionRetryer {
+	return c.conditions
+}
+
+// isSuccessCondition checks if a condition is a success-type condition.
+func (c *CompositeCondition) isSuccessCondition(condition ConditionRetryer) bool {
+	switch condition.(type) {
+	case *SuccessOnExitCode, *SuccessContains, *SuccessRegex:
+		return true
+	default:
+		return false
+	}
 }

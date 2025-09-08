@@ -32,11 +32,12 @@ const (
 
 // Retry is a struct that represents a retry mechanism for executing commands.
 type Retry struct {
-	cmd          string
-	tries        int
-	condition    ConditionRetryer
-	backoff      BackoffStrategy
-	lastExitCode int
+	cmd               string
+	tries             int
+	condition         ConditionRetryer
+	backoff           BackoffStrategy
+	lastExitCode      int
+	successConditions []ConditionRetryer
 }
 
 // ConditionRetryer is an interface that defines the methods required for a retry condition.
@@ -62,6 +63,16 @@ func NewRetry(cmd string, condition ConditionRetryer) (*Retry, error) {
 // SetBackoffStrategy sets the backoff strategy to be used between retries.
 func (r *Retry) SetBackoffStrategy(backoff BackoffStrategy) {
 	r.backoff = backoff
+}
+
+// SetSuccessConditions sets the success conditions to be evaluated separately from stop conditions.
+func (r *Retry) SetSuccessConditions(conditions []ConditionRetryer) {
+	r.successConditions = conditions
+}
+
+// GetSuccessConditions returns the success conditions for debugging.
+func (r *Retry) GetSuccessConditions() []ConditionRetryer {
+	return r.successConditions
 }
 
 // Run executes the command with retries based on the condition.
@@ -98,6 +109,12 @@ func (r *Retry) getFinalError(err error) error {
 	if r.condition.GetCtx().Err() != nil {
 		return fmt.Errorf("context error: %w", r.condition.GetCtx().Err())
 	}
+	
+	// If success conditions were met, don't return max tries error
+	if r.isSuccessConditionMet() {
+		return nil
+	}
+	
 	if r.condition.IsLimitReached() && err != nil {
 		return ErrMaxTriesReached
 	}
@@ -127,6 +144,11 @@ func (r *Retry) executeSingleTryWithLogger(logger *Logger) error {
 	if r.condition != nil {
 		r.condition.StartTry()
 	}
+	
+	// Start try for success conditions
+	for _, successCond := range r.successConditions {
+		successCond.StartTry()
+	}
 	r.tries++
 	
 	rc, stdout, stderr, err := execCommandWithOutputAndLogger(r.condition.GetCtx(), r.cmd, logger)
@@ -137,9 +159,22 @@ func (r *Retry) executeSingleTryWithLogger(logger *Logger) error {
 		enhanced.SetLastExitCode(rc)
 		enhanced.SetLastOutput(stdout, stderr)
 	}
+	
+	// Pass exit code and output to success conditions
+	for _, successCond := range r.successConditions {
+		if enhanced, ok := successCond.(EnhancedConditionRetryer); ok {
+			enhanced.SetLastExitCode(rc)
+			enhanced.SetLastOutput(stdout, stderr)
+		}
+	}
 
 	if r.condition != nil {
 		r.condition.EndTry()
+	}
+	
+	// End try for success conditions
+	for _, successCond := range r.successConditions {
+		successCond.EndTry()
 	}
 	
 	return err
@@ -174,36 +209,6 @@ func setupCommandPipes(c *exec.Cmd) (io.ReadCloser, io.ReadCloser, error) {
 	return stdout, stderr, nil
 }
 
-// handleCommandOutput processes command output with optional logging.
-func handleCommandOutput(stdout, stderr io.ReadCloser, logger *Logger, wg *sync.WaitGroup) (string, string) {
-	var stdoutBuf, stderrBuf strings.Builder
-	
-	wg.Add(outputStreams)
-	
-	go func() {
-		defer wg.Done()
-		if logger != nil {
-			stdoutWriter := NewPrefixWriter(logger, false)
-			_, _ = io.Copy(io.MultiWriter(&stdoutBuf, stdoutWriter), stdout)
-			stdoutWriter.Flush()
-		} else {
-			_, _ = io.Copy(io.MultiWriter(os.Stdout, &stdoutBuf), stdout)
-		}
-	}()
-
-	go func() {
-		defer wg.Done()
-		if logger != nil {
-			stderrWriter := NewPrefixWriter(logger, true)
-			_, _ = io.Copy(io.MultiWriter(&stderrBuf, stderrWriter), stderr)
-			stderrWriter.Flush()
-		} else {
-			_, _ = io.Copy(io.MultiWriter(os.Stderr, &stderrBuf), stderr)
-		}
-	}()
-	
-	return stdoutBuf.String(), stderrBuf.String()
-}
 
 // getExitCode extracts the exit code from a process error.
 func getExitCode(err error) int {
@@ -247,12 +252,39 @@ func executeCommandWithPipes(c *exec.Cmd, logger *Logger) (int, string, string, 
 // waitForCommandCompletion waits for command to finish and processes output.
 func waitForCommandCompletion(c *exec.Cmd, stdout, stderr io.ReadCloser, logger *Logger) (int, string, string, error) {
 	var wg sync.WaitGroup
-	stdoutStr, stderrStr := handleCommandOutput(stdout, stderr, logger, &wg)
+	var stdoutBuf, stderrBuf strings.Builder
+	
+	wg.Add(outputStreams)
+	
+	go func() {
+		defer wg.Done()
+		if logger != nil {
+			stdoutWriter := NewPrefixWriter(logger, false)
+			_, _ = io.Copy(io.MultiWriter(&stdoutBuf, stdoutWriter), stdout)
+			stdoutWriter.Flush()
+		} else {
+			_, _ = io.Copy(io.MultiWriter(os.Stdout, &stdoutBuf), stdout)
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		if logger != nil {
+			stderrWriter := NewPrefixWriter(logger, true)
+			_, _ = io.Copy(io.MultiWriter(&stderrBuf, stderrWriter), stderr)
+			stderrWriter.Flush()
+		} else {
+			_, _ = io.Copy(io.MultiWriter(os.Stderr, &stderrBuf), stderr)
+		}
+	}()
 	
 	err := c.Wait()
 	_ = stderr.Close()
 	_ = stdout.Close()
 	wg.Wait()
+	
+	stdoutStr := stdoutBuf.String()
+	stderrStr := stderrBuf.String()
 	
 	exitCode := getExitCode(err)
 	if err != nil {
@@ -272,6 +304,16 @@ func (r *Retry) initializeLogging(logger *Logger) {
 	if mt, ok := r.condition.(*StopOnMaxTries); ok {
 		if mt.maxTries <= ^uint(0)>>1 { // Check if fits in int
 			maxTries = int(mt.maxTries)
+		}
+	} else if comp, ok := r.condition.(*CompositeCondition); ok {
+		// For composite conditions, look for StopOnMaxTries within the composite
+		for _, cond := range comp.GetConditions() {
+			if mt, ok := cond.(*StopOnMaxTries); ok {
+				if mt.maxTries <= ^uint(0)>>1 { // Check if fits in int
+					maxTries = int(mt.maxTries)
+					break
+				}
+			}
 		}
 	}
 	
@@ -293,13 +335,20 @@ func (r *Retry) executeRetryLoop(logger *Logger) error {
 		}
 
 		err = r.executeSingleTryWithLogger(logger)
-		success := err == nil
+		
+		// Check if this is a success condition (even if err != nil)
+		// Success conditions that have IsLimitReached() == true mean success was achieved
+		success := err == nil || r.isSuccessConditionMet()
 
 		if logger != nil {
 			logger.EndAttempt(r.getLastExitCode(), success)
 		}
 
 		if success {
+			// Clear the error if success condition was met
+			if r.isSuccessConditionMet() {
+				err = nil
+			}
 			break
 		}
 
@@ -310,6 +359,58 @@ func (r *Retry) executeRetryLoop(logger *Logger) error {
 	}
 	
 	return err
+}
+
+// isSuccessConditionMet checks if any success condition has been met.
+func (r *Retry) isSuccessConditionMet() bool {
+	// Check dedicated success conditions first
+	for _, cond := range r.successConditions {
+		if cond.IsLimitReached() {
+			return true
+		}
+	}
+	
+	// Fallback: check if the main condition is a success-type condition
+	if r.condition == nil {
+		return false
+	}
+	
+	// Check if this is a SuccessOnExitCode, SuccessContains, or SuccessRegex
+	switch cond := r.condition.(type) {
+	case *SuccessOnExitCode:
+		return cond.IsLimitReached()
+	case *SuccessContains:
+		return cond.IsLimitReached()
+	case *SuccessRegex:
+		return cond.IsLimitReached()
+	case *CompositeCondition:
+		// For composite conditions, check each sub-condition
+		return r.checkCompositeForSuccess(cond)
+	}
+	
+	return false
+}
+
+// checkCompositeForSuccess checks if any success condition in a composite has been met.
+func (r *Retry) checkCompositeForSuccess(comp *CompositeCondition) bool {
+	// Check each condition in the composite
+	for _, cond := range comp.GetConditions() {
+		switch c := cond.(type) {
+		case *SuccessOnExitCode:
+			if c.IsLimitReached() {
+				return true
+			}
+		case *SuccessContains:
+			if c.IsLimitReached() {
+				return true
+			}
+		case *SuccessRegex:
+			if c.IsLimitReached() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // determineFailureReason determines why the retry execution stopped.
