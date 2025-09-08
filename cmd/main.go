@@ -576,16 +576,16 @@ func createAndRunRetryWithEnhancedLogging(
 	}
 
 	// Separate success conditions from stop conditions
-	stopConditions, successConditions := separateConditions(condition)
+	result := separateConditions(condition)
 	
 	// Create retry instance
-	r, err := retry.NewRetry(commandStr, stopConditions)
+	r, err := retry.NewRetry(commandStr, result.stopCondition)
 	if err != nil {
 		return fmt.Errorf("failed to create retry instance: %w", err)
 	}
 	
 	// Set success conditions separately
-	r.SetSuccessConditions(successConditions)
+	r.SetSuccessConditions(result.successConditions)
 
 	// Build strategy
 	strategy, err := buildStrategy(cmd)
@@ -1045,7 +1045,13 @@ func getValueOrEnv(cmd *cobra.Command, flagName string, flagValue string) string
 	return flagValue
 }
 
-func separateConditions(condition retry.ConditionRetryer) (retry.ConditionRetryer, []retry.ConditionRetryer) {
+// conditionSeparationResult holds the result of separating conditions.
+type conditionSeparationResult struct {
+	stopCondition     retry.ConditionRetryer
+	successConditions []retry.ConditionRetryer
+}
+
+func separateConditions(condition retry.ConditionRetryer) conditionSeparationResult {
 	// If it's a composite condition, separate success from stop conditions
 	if comp, ok := condition.(*retry.CompositeCondition); ok {
 		return separateCompositeConditions(comp)
@@ -1054,14 +1060,20 @@ func separateConditions(condition retry.ConditionRetryer) (retry.ConditionRetrye
 	// If it's a single success condition, return it as a success condition
 	if isSuccessCondition(condition) {
 		// Return a default stop condition (max tries = 1) and the success condition
-		return retry.NewStopOnMaxTries(1), []retry.ConditionRetryer{condition}
+		return conditionSeparationResult{
+			stopCondition:     retry.NewStopOnMaxTries(1),
+			successConditions: []retry.ConditionRetryer{condition},
+		}
 	}
 	
 	// Otherwise, it's a stop condition
-	return condition, nil
+	return conditionSeparationResult{
+		stopCondition:     condition,
+		successConditions: nil,
+	}
 }
 
-func separateCompositeConditions(comp *retry.CompositeCondition) (retry.ConditionRetryer, []retry.ConditionRetryer) {
+func separateCompositeConditions(comp *retry.CompositeCondition) conditionSeparationResult {
 	var stopConditions []retry.ConditionRetryer
 	var successConditions []retry.ConditionRetryer
 	
@@ -1075,17 +1087,21 @@ func separateCompositeConditions(comp *retry.CompositeCondition) (retry.Conditio
 	
 	// Build final stop condition
 	var finalStopCondition retry.ConditionRetryer
-	if len(stopConditions) == 0 {
+	switch len(stopConditions) {
+	case 0:
 		// No stop conditions, use default
 		finalStopCondition = retry.NewStopOnMaxTries(1)
-	} else if len(stopConditions) == 1 {
+	case 1:
 		finalStopCondition = stopConditions[0]
-	} else {
+	default:
 		// Multiple stop conditions, recreate composite
 		finalStopCondition = retry.NewCompositeCondition(retry.LogicOR, stopConditions...)
 	}
 	
-	return finalStopCondition, successConditions
+	return conditionSeparationResult{
+		stopCondition:     finalStopCondition,
+		successConditions: successConditions,
+	}
 }
 
 func isSuccessCondition(condition retry.ConditionRetryer) bool {

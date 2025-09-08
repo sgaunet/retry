@@ -300,22 +300,7 @@ func (r *Retry) initializeLogging(logger *Logger) {
 		return
 	}
 	
-	maxTries := 0
-	if mt, ok := r.condition.(*StopOnMaxTries); ok {
-		if mt.maxTries <= ^uint(0)>>1 { // Check if fits in int
-			maxTries = int(mt.maxTries)
-		}
-	} else if comp, ok := r.condition.(*CompositeCondition); ok {
-		// For composite conditions, look for StopOnMaxTries within the composite
-		for _, cond := range comp.GetConditions() {
-			if mt, ok := cond.(*StopOnMaxTries); ok {
-				if mt.maxTries <= ^uint(0)>>1 { // Check if fits in int
-					maxTries = int(mt.maxTries)
-					break
-				}
-			}
-		}
-	}
+	maxTries := r.extractMaxTriesFromCondition()
 	
 	backoffName := "fixed"
 	if r.backoff != nil {
@@ -323,6 +308,29 @@ func (r *Retry) initializeLogging(logger *Logger) {
 	}
 	
 	logger.StartExecution(r.cmd, maxTries, backoffName)
+}
+
+// extractMaxTriesFromCondition extracts the maxTries value from the condition.
+func (r *Retry) extractMaxTriesFromCondition() int {
+	if mt, ok := r.condition.(*StopOnMaxTries); ok {
+		if mt.maxTries <= ^uint(0)>>1 { // Check if fits in int
+			return int(mt.maxTries)
+		}
+		return 0
+	}
+	
+	if comp, ok := r.condition.(*CompositeCondition); ok {
+		// For composite conditions, look for StopOnMaxTries within the composite
+		for _, cond := range comp.GetConditions() {
+			if mt, ok := cond.(*StopOnMaxTries); ok {
+				if mt.maxTries <= ^uint(0)>>1 { // Check if fits in int
+					return int(mt.maxTries)
+				}
+			}
+		}
+	}
+	
+	return 0
 }
 
 // executeRetryLoop runs the main retry loop logic.
