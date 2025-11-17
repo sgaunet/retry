@@ -1024,9 +1024,12 @@ testcases:
       go run ../cmd --quiet --max-tries 2 "echo 'quiet mode test'"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "[1/2] Attempting command..."
-    - result.systemout ShouldContainSubstring "│ quiet mode test"
-    - result.systemout ShouldContainSubstring "✓ Success"
+    - result.systemout ShouldNotContainSubstring "[1/2] Attempting command..."
+    - result.systemout ShouldNotContainSubstring "│ quiet mode test"
+    - result.systemout ShouldNotContainSubstring "✓ Success"
+    - result.systemout ShouldContainSubstring "SUMMARY"
+    - result.systemout ShouldContainSubstring "Result"
+    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-log-file-creation
   steps:

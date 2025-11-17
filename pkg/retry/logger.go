@@ -192,7 +192,7 @@ func (l *Logger) StartExecution(command string, maxAttempts int, backoffStrategy
 // StartAttempt logs the start of a new retry attempt.
 func (l *Logger) StartAttempt(attempt int) {
 	l.currentAttempt = attempt
-	
+
 	// Track JSON attempt start
 	if l.mode == OutputModeJSON && l.jsonOutput != nil {
 		jsonAttempt := JSONAttempt{
@@ -201,8 +201,12 @@ func (l *Logger) StartAttempt(attempt int) {
 		}
 		l.jsonOutput.Attempts = append(l.jsonOutput.Attempts, jsonAttempt)
 	}
-	
+
+	// Skip output for summary-only, JSON, or quiet modes (but not quiet-retries)
 	if l.mode == OutputModeSummaryOnly || l.mode == OutputModeJSON {
+		return
+	}
+	if l.level == LogLevelQuiet && l.mode != OutputModeQuietRetries {
 		return
 	}
 	
@@ -241,7 +245,7 @@ func (l *Logger) LogCommandOutput(line string, isStderr bool) {
 // EndAttempt logs the result of an attempt.
 func (l *Logger) EndAttempt(exitCode int, success bool) {
 	l.lastExitCode = exitCode
-	
+
 	// Update JSON attempt data
 	if l.mode == OutputModeJSON && l.jsonOutput != nil && len(l.jsonOutput.Attempts) > 0 {
 		lastAttemptIdx := len(l.jsonOutput.Attempts) - 1
@@ -251,8 +255,12 @@ func (l *Logger) EndAttempt(exitCode int, success bool) {
 		attempt.EndTime = time.Now()
 		attempt.Duration = attempt.EndTime.Sub(attempt.StartTime).String()
 	}
-	
+
+	// Skip output for summary-only, JSON, or quiet modes (but not quiet-retries)
 	if l.mode == OutputModeSummaryOnly || l.mode == OutputModeJSON {
+		return
+	}
+	if l.level == LogLevelQuiet && l.mode != OutputModeQuietRetries {
 		return
 	}
 	
@@ -390,7 +398,12 @@ func (l *Logger) shouldSkipConsoleOutput() bool {
 	if l.mode == OutputModeSummaryOnly || l.mode == OutputModeJSON {
 		return true
 	}
-	
+
+	// In quiet mode (but not quiet-retries), suppress all command output
+	if l.level == LogLevelQuiet && l.mode != OutputModeQuietRetries {
+		return true
+	}
+
 	return l.mode == OutputModeQuietRetries && l.currentAttempt < l.maxAttempts
 }
 
@@ -453,11 +466,12 @@ func (l *Logger) setupColors() {
 
 // printSummary prints the final execution summary.
 func (l *Logger) printSummary() {
-	// Don't print summary for quiet log level, unless it's an explicit output mode that should show summary
-	if l.level == LogLevelQuiet && l.mode != OutputModeQuietRetries {
+	// Don't print summary for summary-only mode (it's handled differently)
+	// But DO print summary for quiet mode (that's the "final result")
+	if l.mode == OutputModeSummaryOnly {
 		return
 	}
-	
+
 	_, _ = fmt.Fprintln(l.out)
 	
 	// Summary header
