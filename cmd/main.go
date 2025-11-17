@@ -273,20 +273,46 @@ func bindFlagsToViper() {
 
 func init() {
 	rootCmd.AddCommand(versionCmd)
-	
+
 	setupBasicFlags()
 	setupBackoffFlags()
 	setupStopConditionFlags()
 	setupSuccessFailureFlags()
 	setupOutputFlags()
-	
+
 	setupEnvironmentBindings()
 	bindFlagsToViper()
 }
 
+// joinCommandArgs properly joins command arguments, quoting those that contain spaces.
+func joinCommandArgs(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+
+	// If there's only one argument, return it as-is
+	if len(args) == 1 {
+		return args[0]
+	}
+
+	result := make([]string, len(args))
+	for i, arg := range args {
+		// Quote arguments that contain spaces or are empty
+		if strings.Contains(arg, " ") || strings.Contains(arg, "\t") || arg == "" {
+			// Use single quotes and escape any single quotes in the argument
+			escaped := strings.ReplaceAll(arg, "'", "'\"'\"'")
+			result[i] = fmt.Sprintf("'%s'", escaped)
+		} else {
+			result[i] = arg
+		}
+	}
+
+	return strings.Join(result, " ")
+}
+
 func runRetry(cmd *cobra.Command, args []string) error {
 	// Get command from positional arguments
-	commandStr := strings.Join(args, " ")
+	commandStr := joinCommandArgs(args)
 	if commandStr == "" {
 		return ErrCommandEmpty
 	}
@@ -506,7 +532,7 @@ func parseLogLevel(levelStr string) retry.LogLevel {
 func determineLogLevel(cmd *cobra.Command) retry.LogLevel {
 	// Check for new --quiet flag (highest priority for minimal output)
 	if quiet || (!cmd.Flags().Changed("quiet") && viper.GetBool("quiet")) {
-		return retry.LogLevelError // Only show errors in quiet mode
+		return retry.LogLevelQuiet // Minimal output - only show final result
 	}
 	
 	// Check for new --log-level flag
