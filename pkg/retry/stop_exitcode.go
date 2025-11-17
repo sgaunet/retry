@@ -1,6 +1,9 @@
 package retry
 
-import "context"
+import (
+	"context"
+	"slices"
+)
 
 // StopOnExitCode stops retrying when a specific exit code is encountered.
 type StopOnExitCode struct {
@@ -37,15 +40,7 @@ func (s *StopOnExitCode) EndTry() {}
 // SetLastExitCode updates the last exit code and checks if we should stop.
 func (s *StopOnExitCode) SetLastExitCode(code int) {
 	s.lastExitCode = code
-	s.shouldStop = false
-	
-	// Check if this exit code is in our stop list
-	for _, stopCode := range s.stopCodes {
-		if code == stopCode {
-			s.shouldStop = true
-			return
-		}
-	}
+	s.shouldStop = slices.Contains(s.stopCodes, code)
 }
 
 // SetLastOutput is not used by exit code condition.

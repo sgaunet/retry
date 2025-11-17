@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -27,8 +28,8 @@ const (
 
 var (
 	version = "dev"
-	
-	// Error definitions.
+
+	// ErrCommandRequired is returned when no command is provided as a positional argument.
 	ErrCommandRequired       = errors.New("command is required as a positional argument")
 	ErrCommandEmpty          = errors.New("command is required")
 	ErrInvalidMultiplier     = errors.New("multiplier must be greater than 1.0")
@@ -359,12 +360,10 @@ func validateLogLevel(cmd *cobra.Command) error {
 	}
 	
 	validLevels := []string{"error", "warn", "warning", "info", "debug"}
-	for _, level := range validLevels {
-		if strings.ToLower(finalLogLevel) == level {
-			return nil
-		}
+	if slices.Contains(validLevels, strings.ToLower(finalLogLevel)) {
+		return nil
 	}
-	
+
 	return ErrInvalidLogLevel
 }
 
