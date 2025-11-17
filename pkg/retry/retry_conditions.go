@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -45,15 +46,7 @@ func (r *RetryOnExitCode) EndTry() {}
 // SetLastExitCode updates the last exit code and determines if we should retry.
 func (r *RetryOnExitCode) SetLastExitCode(code int) {
 	r.lastExitCode = code
-	r.shouldRetry = false
-	
-	// Check if this exit code is in our retry list
-	for _, retryCode := range r.retryCodes {
-		if code == retryCode {
-			r.shouldRetry = true
-			return
-		}
-	}
+	r.shouldRetry = slices.Contains(r.retryCodes, code)
 }
 
 // SetLastOutput is not used by retry exit code condition.

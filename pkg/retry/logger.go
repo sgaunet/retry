@@ -64,11 +64,11 @@ type Logger struct {
 	logFile    io.WriteCloser // Optional log file
 	
 	// Color functions
-	dimColor     func(a ...interface{}) string
-	successColor func(a ...interface{}) string
-	errorColor   func(a ...interface{}) string
-	warnColor    func(a ...interface{}) string
-	boldColor    func(a ...interface{}) string
+	dimColor     func(a ...any) string
+	successColor func(a ...any) string
+	errorColor   func(a ...any) string
+	warnColor    func(a ...any) string
+	boldColor    func(a ...any) string
 	
 	// State tracking
 	currentAttempt int
@@ -245,35 +245,16 @@ func (l *Logger) LogCommandOutput(line string, isStderr bool) {
 // EndAttempt logs the result of an attempt.
 func (l *Logger) EndAttempt(exitCode int, success bool) {
 	l.lastExitCode = exitCode
+	l.updateJSONAttemptData(exitCode, success)
 
-	// Update JSON attempt data
-	if l.mode == OutputModeJSON && l.jsonOutput != nil && len(l.jsonOutput.Attempts) > 0 {
-		lastAttemptIdx := len(l.jsonOutput.Attempts) - 1
-		attempt := &l.jsonOutput.Attempts[lastAttemptIdx]
-		attempt.ExitCode = exitCode
-		attempt.Success = success
-		attempt.EndTime = time.Now()
-		attempt.Duration = attempt.EndTime.Sub(attempt.StartTime).String()
-	}
-
-	// Skip output for summary-only, JSON, or quiet modes (but not quiet-retries)
-	if l.mode == OutputModeSummaryOnly || l.mode == OutputModeJSON {
+	if l.shouldSkipAttemptOutput() {
 		return
 	}
-	if l.level == LogLevelQuiet && l.mode != OutputModeQuietRetries {
-		return
-	}
-	
-	var statusMsg string
-	if success {
-		statusMsg = l.successColor("✓ Success")
-	} else {
-		statusMsg = l.errorColor(fmt.Sprintf("✗ Failed with exit code %d", exitCode))
-	}
-	
+
+	statusMsg := l.formatStatusMessage(exitCode, success)
 	_, _ = fmt.Fprintln(l.out, statusMsg)
 	l.writeToLogFile(statusMsg)
-	
+
 	if !success && l.currentAttempt < l.maxAttempts {
 		_, _ = fmt.Fprintln(l.out) // Add blank line between attempts
 	}
@@ -356,6 +337,36 @@ func (l *Logger) Verbose(msg string) {
 	verboseMsg := l.dimColor(msg)
 	_, _ = fmt.Fprintln(l.out, verboseMsg)
 	l.writeToLogFile(verboseMsg)
+}
+
+// updateJSONAttemptData updates the JSON attempt data with exit code and success status.
+func (l *Logger) updateJSONAttemptData(exitCode int, success bool) {
+	if l.mode != OutputModeJSON || l.jsonOutput == nil || len(l.jsonOutput.Attempts) == 0 {
+		return
+	}
+
+	lastAttemptIdx := len(l.jsonOutput.Attempts) - 1
+	attempt := &l.jsonOutput.Attempts[lastAttemptIdx]
+	attempt.ExitCode = exitCode
+	attempt.Success = success
+	attempt.EndTime = time.Now()
+	attempt.Duration = attempt.EndTime.Sub(attempt.StartTime).String()
+}
+
+// shouldSkipAttemptOutput determines if attempt output should be skipped.
+func (l *Logger) shouldSkipAttemptOutput() bool {
+	if l.mode == OutputModeSummaryOnly || l.mode == OutputModeJSON {
+		return true
+	}
+	return l.level == LogLevelQuiet && l.mode != OutputModeQuietRetries
+}
+
+// formatStatusMessage creates the status message for an attempt.
+func (l *Logger) formatStatusMessage(exitCode int, success bool) string {
+	if success {
+		return l.successColor("✓ Success")
+	}
+	return l.errorColor(fmt.Sprintf("✗ Failed with exit code %d", exitCode))
 }
 
 // writeToLogFile writes a message to the log file if it exists.

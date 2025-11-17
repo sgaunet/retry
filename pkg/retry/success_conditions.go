@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -43,15 +44,7 @@ func (s *SuccessOnExitCode) EndTry() {}
 // SetLastExitCode updates the last exit code and checks for success.
 func (s *SuccessOnExitCode) SetLastExitCode(code int) {
 	s.lastExitCode = code
-	s.isSuccess = false
-	
-	// Check if this exit code is in our success list
-	for _, successCode := range s.successCodes {
-		if code == successCode {
-			s.isSuccess = true
-			return
-		}
-	}
+	s.isSuccess = slices.Contains(s.successCodes, code)
 }
 
 // SetLastOutput is not used by success exit code condition.
