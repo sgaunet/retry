@@ -106,29 +106,51 @@ func (r *Retry) RunWithLogger(ctx context.Context, appLogger logger.Logger) erro
 		if r.backoff != nil {
 			backoffType = "configured"
 		}
-		appLogger.Debug("Retry loop starting", "command", r.cmd, "max_tries", maxTries, "backoff", backoffType, "success_conditions", len(r.successConditions))
+		appLogger.Debug("Retry loop starting",
+			"command", r.cmd,
+			"max_tries", maxTries,
+			"backoff", backoffType,
+			"success_conditions", len(r.successConditions))
 	}
 
 	err := r.executeRetryLoop(ctx, appLogger)
 
-	if appLogger != nil {
-		if err == nil {
-			appLogger.Info("Retry execution completed successfully", "attempts", r.tries, "final_exit_code", r.lastExitCode)
-		} else {
-			// Determine failure reason
-			var failureReason, stopCondition string
-			if r.condition.GetCtx().Err() != nil {
-				failureReason = "context timeout"
-				stopCondition = "timeout"
-			} else if r.condition.IsLimitReached() {
-				failureReason = "max tries reached"
-				stopCondition = "max tries"
-			}
-			appLogger.Warn("Retry execution failed", "reason", failureReason, "stop_condition", stopCondition, "attempts", r.tries, "final_exit_code", r.lastExitCode)
-		}
-	}
+	r.logExecutionResult(err, appLogger)
 
 	return r.getFinalError(ctx, err)
+}
+
+// logExecutionResult logs the final result of the retry execution.
+func (r *Retry) logExecutionResult(err error, appLogger logger.Logger) {
+	if appLogger == nil {
+		return
+	}
+
+	if err == nil {
+		appLogger.Info("Retry execution completed successfully",
+			"attempts", r.tries,
+			"final_exit_code", r.lastExitCode)
+		return
+	}
+
+	// Determine failure reason
+	failureReason, stopCondition := r.determineFailureReason()
+	appLogger.Warn("Retry execution failed",
+		"reason", failureReason,
+		"stop_condition", stopCondition,
+		"attempts", r.tries,
+		"final_exit_code", r.lastExitCode)
+}
+
+// determineFailureReason determines the reason for retry failure.
+func (r *Retry) determineFailureReason() (string, string) {
+	if r.condition.GetCtx().Err() != nil {
+		return "context timeout", "timeout"
+	}
+	if r.condition.IsLimitReached() {
+		return "max tries reached", "max tries"
+	}
+	return "", ""
 }
 
 // shouldContinue checks if the retry loop should continue.
@@ -143,33 +165,49 @@ func (r *Retry) shouldContinue(ctx context.Context, appLogger logger.Logger) boo
 
 	if r.condition.GetCtx().Err() != nil {
 		if appLogger != nil {
-			appLogger.Debug("Condition context cancelled, stopping retry loop", "error", r.condition.GetCtx().Err())
+			appLogger.Debug("Condition context cancelled, stopping retry loop",
+				"error", r.condition.GetCtx().Err())
 		}
 		return false
 	}
 
 	if r.condition.IsLimitReached() {
-		if appLogger != nil {
-			// Provide detailed logging based on condition type
-			switch cond := r.condition.(type) {
-			case *StopOnMaxTries:
-				appLogger.Debug("Stop condition reached: maximum tries exceeded", "attempts", r.tries, "max_tries", cond.maxTries)
-			case *StopOnMaxExecutionTime:
-				appLogger.Debug("Stop condition reached: maximum execution time exceeded", "attempts", r.tries)
-			case *StopOnExitCode:
-				appLogger.Debug("Stop condition reached: exit code matched", "attempts", r.tries, "exit_code", r.lastExitCode)
-			case *StopOnTimeout:
-				appLogger.Debug("Stop condition reached: timeout", "attempts", r.tries)
-			case *CompositeCondition:
-				appLogger.Debug("Stop condition reached: composite condition met", "attempts", r.tries)
-			default:
-				appLogger.Debug("Stop condition reached", "attempts", r.tries)
-			}
-		}
+		r.logStopConditionReached(appLogger)
 		return false
 	}
 
 	return true
+}
+
+// logStopConditionReached logs when a stop condition has been reached.
+func (r *Retry) logStopConditionReached(appLogger logger.Logger) {
+	if appLogger == nil {
+		return
+	}
+
+	// Provide detailed logging based on condition type
+	switch cond := r.condition.(type) {
+	case *StopOnMaxTries:
+		appLogger.Debug("Stop condition reached: maximum tries exceeded",
+			"attempts", r.tries,
+			"max_tries", cond.maxTries)
+	case *StopOnMaxExecutionTime:
+		appLogger.Debug("Stop condition reached: maximum execution time exceeded",
+			"attempts", r.tries)
+	case *StopOnExitCode:
+		appLogger.Debug("Stop condition reached: exit code matched",
+			"attempts", r.tries,
+			"exit_code", r.lastExitCode)
+	case *StopOnTimeout:
+		appLogger.Debug("Stop condition reached: timeout",
+			"attempts", r.tries)
+	case *CompositeCondition:
+		appLogger.Debug("Stop condition reached: composite condition met",
+			"attempts", r.tries)
+	default:
+		appLogger.Debug("Stop condition reached",
+			"attempts", r.tries)
+	}
 }
 
 
@@ -202,27 +240,52 @@ func (r *Retry) performBackoffWithDelay(appLogger logger.Logger) time.Duration {
 		delay := r.backoff.NextDelay(r.tries)
 		if delay > 0 {
 			if appLogger != nil {
-				// Log detailed backoff information based on strategy type
-				switch b := r.backoff.(type) {
-				case *FixedBackoff:
-					appLogger.Debug("Applying fixed backoff delay", "delay", delay, "attempt", r.tries, "strategy", "fixed")
-				case *ExponentialBackoff:
-					appLogger.Debug("Applying exponential backoff delay", "delay", delay, "attempt", r.tries, "strategy", "exponential", "base_delay", b.BaseDelay, "max_delay", b.MaxDelay, "multiplier", b.Multiplier)
-				case *LinearBackoff:
-					appLogger.Debug("Applying linear backoff delay", "delay", delay, "attempt", r.tries, "strategy", "linear")
-				case *FibonacciBackoff:
-					appLogger.Debug("Applying fibonacci backoff delay", "delay", delay, "attempt", r.tries, "strategy", "fibonacci")
-				case *JitterBackoff:
-					appLogger.Debug("Applying jitter backoff delay (with randomization)", "delay", delay, "attempt", r.tries, "strategy", "jitter")
-				default:
-					appLogger.Debug("Applying custom backoff delay", "delay", delay, "attempt", r.tries, "strategy", "custom")
-				}
+				r.logBackoffDelay(delay, appLogger)
 			}
 			time.Sleep(delay)
 			return delay
 		}
 	}
 	return 0
+}
+
+// logBackoffDelay logs detailed backoff information based on strategy type.
+func (r *Retry) logBackoffDelay(delay time.Duration, appLogger logger.Logger) {
+	switch b := r.backoff.(type) {
+	case *FixedBackoff:
+		appLogger.Debug("Applying fixed backoff delay",
+			"delay", delay,
+			"attempt", r.tries,
+			"strategy", "fixed")
+	case *ExponentialBackoff:
+		appLogger.Debug("Applying exponential backoff delay",
+			"delay", delay,
+			"attempt", r.tries,
+			"strategy", "exponential",
+			"base_delay", b.BaseDelay,
+			"max_delay", b.MaxDelay,
+			"multiplier", b.Multiplier)
+	case *LinearBackoff:
+		appLogger.Debug("Applying linear backoff delay",
+			"delay", delay,
+			"attempt", r.tries,
+			"strategy", "linear")
+	case *FibonacciBackoff:
+		appLogger.Debug("Applying fibonacci backoff delay",
+			"delay", delay,
+			"attempt", r.tries,
+			"strategy", "fibonacci")
+	case *JitterBackoff:
+		appLogger.Debug("Applying jitter backoff delay (with randomization)",
+			"delay", delay,
+			"attempt", r.tries,
+			"strategy", "jitter")
+	default:
+		appLogger.Debug("Applying custom backoff delay",
+			"delay", delay,
+			"attempt", r.tries,
+			"strategy", "custom")
+	}
 }
 
 // getLastExitCode returns the exit code from the last command execution.
@@ -347,7 +410,9 @@ func checkSignalTermination(c *exec.Cmd, err error) (int, error) {
 	return signalExitCode, signalErr
 }
 
-func execCommandWithOutputAndLogger(ctx context.Context, cmd string, appLogger logger.Logger) (int, string, string, error) {
+func execCommandWithOutputAndLogger(
+	ctx context.Context, cmd string, appLogger logger.Logger,
+) (int, string, string, error) {
 	splitCmd, err := parseCommand(cmd)
 	if err != nil {
 		if appLogger != nil {
@@ -468,16 +533,7 @@ func (r *Retry) executeRetryLoop(ctx context.Context, appLogger logger.Logger) e
 		successCondMet := r.isSuccessConditionMet()
 		success := err == nil || successCondMet
 
-		if appLogger != nil {
-			if successCondMet {
-				appLogger.Info("Command succeeded with success condition met", "attempt", r.tries, "exit_code", r.getLastExitCode())
-				r.logSuccessConditionDetails(appLogger)
-			} else if err == nil {
-				appLogger.Info("Command succeeded", "attempt", r.tries, "exit_code", 0)
-			} else {
-				appLogger.Warn("Command failed", "attempt", r.tries, "exit_code", r.getLastExitCode())
-			}
-		}
+		r.logAttemptResult(successCondMet, err, appLogger)
 
 		if success {
 			// Clear the error if success condition was met
@@ -494,6 +550,29 @@ func (r *Retry) executeRetryLoop(ctx context.Context, appLogger logger.Logger) e
 	}
 
 	return err
+}
+
+// logAttemptResult logs the result of a retry attempt.
+func (r *Retry) logAttemptResult(successCondMet bool, err error, appLogger logger.Logger) {
+	if appLogger == nil {
+		return
+	}
+
+	switch {
+	case successCondMet:
+		appLogger.Info("Command succeeded with success condition met",
+			"attempt", r.tries,
+			"exit_code", r.getLastExitCode())
+		r.logSuccessConditionDetails(appLogger)
+	case err == nil:
+		appLogger.Info("Command succeeded",
+			"attempt", r.tries,
+			"exit_code", 0)
+	default:
+		appLogger.Warn("Command failed",
+			"attempt", r.tries,
+			"exit_code", r.getLastExitCode())
+	}
 }
 
 // isSuccessConditionMet checks if any success condition has been met.
@@ -556,34 +635,51 @@ func (r *Retry) logSuccessConditionDetails(appLogger logger.Logger) {
 
 	// Log dedicated success conditions
 	for i, cond := range r.successConditions {
-		if !cond.IsLimitReached() {
-			continue
-		}
-
-		switch c := cond.(type) {
-		case *SuccessOnExitCode:
-			appLogger.Debug("Success condition details: exit code matched", "condition_index", i, "exit_code", c.lastExitCode, "expected_codes", c.successCodes)
-		case *SuccessContains:
-			appLogger.Debug("Success condition details: output pattern found", "condition_index", i, "pattern", c.pattern)
-		case *SuccessRegex:
-			appLogger.Debug("Success condition details: regex matched", "condition_index", i, "pattern", c.pattern)
+		if cond.IsLimitReached() {
+			r.logDedicatedSuccessCondition(i, cond, appLogger)
 		}
 	}
 
 	// Also check main condition if it's a success type
+	r.logMainSuccessCondition(appLogger)
+}
+
+// logDedicatedSuccessCondition logs a specific dedicated success condition.
+func (r *Retry) logDedicatedSuccessCondition(index int, cond ConditionRetryer, appLogger logger.Logger) {
+	switch c := cond.(type) {
+	case *SuccessOnExitCode:
+		appLogger.Debug("Success condition details: exit code matched",
+			"condition_index", index,
+			"exit_code", c.lastExitCode,
+			"expected_codes", c.successCodes)
+	case *SuccessContains:
+		appLogger.Debug("Success condition details: output pattern found",
+			"condition_index", index,
+			"pattern", c.pattern)
+	case *SuccessRegex:
+		appLogger.Debug("Success condition details: regex matched",
+			"condition_index", index,
+			"pattern", c.pattern)
+	}
+}
+
+// logMainSuccessCondition logs the main success condition if it was met.
+func (r *Retry) logMainSuccessCondition(appLogger logger.Logger) {
+	if !r.condition.IsLimitReached() {
+		return
+	}
+
 	switch cond := r.condition.(type) {
 	case *SuccessOnExitCode:
-		if cond.IsLimitReached() {
-			appLogger.Debug("Main success condition met: exit code", "exit_code", cond.lastExitCode, "expected_codes", cond.successCodes)
-		}
+		appLogger.Debug("Main success condition met: exit code",
+			"exit_code", cond.lastExitCode,
+			"expected_codes", cond.successCodes)
 	case *SuccessContains:
-		if cond.IsLimitReached() {
-			appLogger.Debug("Main success condition met: pattern found", "pattern", cond.pattern)
-		}
+		appLogger.Debug("Main success condition met: pattern found",
+			"pattern", cond.pattern)
 	case *SuccessRegex:
-		if cond.IsLimitReached() {
-			appLogger.Debug("Main success condition met: regex matched", "pattern", cond.pattern)
-		}
+		appLogger.Debug("Main success condition met: regex matched",
+			"pattern", cond.pattern)
 	}
 }
 
