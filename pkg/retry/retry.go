@@ -85,21 +85,20 @@ func (r *Retry) GetSuccessConditions() []ConditionRetryer {
 // It returns an error if the command fails or if the maximum number of tries is reached.
 // It also logs the output of the command to the provided logger.
 func (r *Retry) Run(_ *slog.Logger) error {
-	return r.RunWithEnhancedLogger(context.TODO(), nil, nil)
+	return r.RunWithLogger(context.TODO(), nil)
 }
 
 
-// RunWithEnhancedLogger executes the command with enhanced logging support.
+// RunWithLogger executes the command with retry logic and logging support.
 // The context parameter allows for cancellation and timeout control from the caller.
-// The appLogger parameter provides debug-level trace logging for internal operations.
+// The appLogger parameter provides logging for retry execution and debug traces.
 //
 //nolint:contextcheck // Context is properly used for cancellation
-func (r *Retry) RunWithEnhancedLogger(ctx context.Context, logger *Logger, appLogger logger.Logger) error {
+func (r *Retry) RunWithLogger(ctx context.Context, appLogger logger.Logger) error {
 	// If no context is provided, use background context for backward compatibility
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	r.initializeLogging(logger)
 
 	if appLogger != nil {
 		maxTries := r.extractMaxTriesFromCondition()
@@ -110,20 +109,23 @@ func (r *Retry) RunWithEnhancedLogger(ctx context.Context, logger *Logger, appLo
 		appLogger.Debug("Retry loop starting", "command", r.cmd, "max_tries", maxTries, "backoff", backoffType, "success_conditions", len(r.successConditions))
 	}
 
-	err := r.executeRetryLoop(ctx, logger, appLogger)
-
-	failureReason, stopCondition := r.determineFailureReason()
+	err := r.executeRetryLoop(ctx, appLogger)
 
 	if appLogger != nil {
 		if err == nil {
-			appLogger.Debug("Retry succeeded", "attempts", r.tries)
+			appLogger.Info("Retry execution completed successfully", "attempts", r.tries, "final_exit_code", r.lastExitCode)
 		} else {
-			appLogger.Debug("Retry failed", "reason", failureReason, "stop_condition", stopCondition, "attempts", r.tries)
+			// Determine failure reason
+			var failureReason, stopCondition string
+			if r.condition.GetCtx().Err() != nil {
+				failureReason = "context timeout"
+				stopCondition = "timeout"
+			} else if r.condition.IsLimitReached() {
+				failureReason = "max tries reached"
+				stopCondition = "max tries"
+			}
+			appLogger.Warn("Retry execution failed", "reason", failureReason, "stop_condition", stopCondition, "attempts", r.tries, "final_exit_code", r.lastExitCode)
 		}
-	}
-
-	if logger != nil {
-		logger.EndExecution(err == nil, failureReason, stopCondition)
 	}
 
 	return r.getFinalError(ctx, err)
@@ -228,8 +230,8 @@ func (r *Retry) getLastExitCode() int {
 	return r.lastExitCode
 }
 
-// executeSingleTryWithLogger executes a single retry attempt with enhanced logging.
-func (r *Retry) executeSingleTryWithLogger(ctx context.Context, logger *Logger, appLogger logger.Logger) error {
+// executeSingleTryWithLogger executes a single retry attempt with logging.
+func (r *Retry) executeSingleTryWithLogger(ctx context.Context, appLogger logger.Logger) error {
 	if r.condition != nil {
 		r.condition.StartTry()
 	}
@@ -245,7 +247,7 @@ func (r *Retry) executeSingleTryWithLogger(ctx context.Context, logger *Logger, 
 	}
 
 	startTime := time.Now()
-	rc, stdout, stderr, err := execCommandWithOutputAndLogger(ctx, r.cmd, logger, appLogger)
+	rc, stdout, stderr, err := execCommandWithOutputAndLogger(ctx, r.cmd, appLogger)
 	duration := time.Since(startTime)
 	r.lastExitCode = rc
 
@@ -345,7 +347,7 @@ func checkSignalTermination(c *exec.Cmd, err error) (int, error) {
 	return signalExitCode, signalErr
 }
 
-func execCommandWithOutputAndLogger(ctx context.Context, cmd string, logger *Logger, appLogger logger.Logger) (int, string, string, error) {
+func execCommandWithOutputAndLogger(ctx context.Context, cmd string, appLogger logger.Logger) (int, string, string, error) {
 	splitCmd, err := parseCommand(cmd)
 	if err != nil {
 		if appLogger != nil {
@@ -365,11 +367,11 @@ func execCommandWithOutputAndLogger(ctx context.Context, cmd string, logger *Log
 		Setpgid: true,
 	}
 
-	return executeCommandWithPipes(c, logger)
+	return executeCommandWithPipes(c)
 }
 
 // executeCommandWithPipes handles command execution with pipes and output processing.
-func executeCommandWithPipes(c *exec.Cmd, logger *Logger) (int, string, string, error) {
+func executeCommandWithPipes(c *exec.Cmd) (int, string, string, error) {
 	stdout, stderr, err := setupCommandPipes(c)
 	if err != nil {
 		return -1, "", "", err
@@ -380,36 +382,24 @@ func executeCommandWithPipes(c *exec.Cmd, logger *Logger) (int, string, string, 
 		return getExitCode(err), "", "", fmt.Errorf("command failed: %w", err)
 	}
 
-	return waitForCommandCompletion(c, stdout, stderr, logger)
+	return waitForCommandCompletion(c, stdout, stderr)
 }
 
 // waitForCommandCompletion waits for command to finish and processes output.
-func waitForCommandCompletion(c *exec.Cmd, stdout, stderr io.ReadCloser, logger *Logger) (int, string, string, error) {
+func waitForCommandCompletion(c *exec.Cmd, stdout, stderr io.ReadCloser) (int, string, string, error) {
 	var wg sync.WaitGroup
 	var stdoutBuf, stderrBuf strings.Builder
-	
+
 	wg.Add(outputStreams)
-	
+
 	go func() {
 		defer wg.Done()
-		if logger != nil {
-			stdoutWriter := NewPrefixWriter(logger, false)
-			_, _ = io.Copy(io.MultiWriter(&stdoutBuf, stdoutWriter), stdout)
-			stdoutWriter.Flush()
-		} else {
-			_, _ = io.Copy(io.MultiWriter(os.Stdout, &stdoutBuf), stdout)
-		}
+		_, _ = io.Copy(io.MultiWriter(os.Stdout, &stdoutBuf), stdout)
 	}()
 
 	go func() {
 		defer wg.Done()
-		if logger != nil {
-			stderrWriter := NewPrefixWriter(logger, true)
-			_, _ = io.Copy(io.MultiWriter(&stderrBuf, stderrWriter), stderr)
-			stderrWriter.Flush()
-		} else {
-			_, _ = io.Copy(io.MultiWriter(os.Stderr, &stderrBuf), stderr)
-		}
+		_, _ = io.Copy(io.MultiWriter(os.Stderr, &stderrBuf), stderr)
 	}()
 	
 	// Wait for command to complete
@@ -437,22 +427,6 @@ func waitForCommandCompletion(c *exec.Cmd, stdout, stderr io.ReadCloser, logger 
 	return exitCode, stdoutStr, stderrStr, nil
 }
 
-// initializeLogging initializes logging for the retry execution.
-func (r *Retry) initializeLogging(logger *Logger) {
-	if logger == nil {
-		return
-	}
-	
-	maxTries := r.extractMaxTriesFromCondition()
-	
-	backoffName := "fixed"
-	if r.backoff != nil {
-		backoffName = "configured"
-	}
-	
-	logger.StartExecution(r.cmd, maxTries, backoffName)
-}
-
 // extractMaxTriesFromCondition extracts the maxTries value from the condition.
 func (r *Retry) extractMaxTriesFromCondition() int {
 	if mt, ok := r.condition.(*StopOnMaxTries); ok {
@@ -477,15 +451,17 @@ func (r *Retry) extractMaxTriesFromCondition() int {
 }
 
 // executeRetryLoop runs the main retry loop logic.
-func (r *Retry) executeRetryLoop(ctx context.Context, logger *Logger, appLogger logger.Logger) error {
+func (r *Retry) executeRetryLoop(ctx context.Context, appLogger logger.Logger) error {
 	var err error
+	maxTries := r.extractMaxTriesFromCondition()
 
 	for r.shouldContinue(ctx, appLogger) {
-		if logger != nil {
-			logger.StartAttempt(r.tries + 1)
+		attemptNum := r.tries + 1
+		if appLogger != nil {
+			appLogger.Info("Attempting command", "attempt", attemptNum, "max_tries", maxTries)
 		}
 
-		err = r.executeSingleTryWithLogger(ctx, logger, appLogger)
+		err = r.executeSingleTryWithLogger(ctx, appLogger)
 
 		// Check if this is a success condition (even if err != nil)
 		// Success conditions that have IsLimitReached() == true mean success was achieved
@@ -494,17 +470,13 @@ func (r *Retry) executeRetryLoop(ctx context.Context, logger *Logger, appLogger 
 
 		if appLogger != nil {
 			if successCondMet {
-				appLogger.Debug("Success condition met", "attempt", r.tries, "exit_code", r.getLastExitCode())
+				appLogger.Info("Command succeeded with success condition met", "attempt", r.tries, "exit_code", r.getLastExitCode())
 				r.logSuccessConditionDetails(appLogger)
 			} else if err == nil {
-				appLogger.Debug("Command succeeded with exit code 0", "attempt", r.tries)
+				appLogger.Info("Command succeeded", "attempt", r.tries, "exit_code", 0)
 			} else {
-				appLogger.Debug("Command failed, will retry if conditions allow", "attempt", r.tries, "exit_code", r.getLastExitCode())
+				appLogger.Warn("Command failed", "attempt", r.tries, "exit_code", r.getLastExitCode())
 			}
-		}
-
-		if logger != nil {
-			logger.EndAttempt(r.getLastExitCode(), success)
 		}
 
 		if success {
@@ -516,8 +488,8 @@ func (r *Retry) executeRetryLoop(ctx context.Context, logger *Logger, appLogger 
 		}
 
 		delay := r.performBackoffWithDelay(appLogger)
-		if logger != nil && delay > 0 {
-			logger.LogRetryDelay(delay)
+		if appLogger != nil && delay > 0 {
+			appLogger.Info("Waiting before retry", "delay", delay)
 		}
 	}
 
@@ -615,12 +587,3 @@ func (r *Retry) logSuccessConditionDetails(appLogger logger.Logger) {
 	}
 }
 
-// determineFailureReason determines why the retry execution stopped.
-func (r *Retry) determineFailureReason() (string, string) {
-	if r.condition.GetCtx().Err() != nil {
-		return "context timeout", "timeout"
-	} else if r.condition.IsLimitReached() {
-		return "max tries reached", "max tries"
-	}
-	return "", ""
-}
