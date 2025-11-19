@@ -78,7 +78,6 @@ var (
 	
 	// Output control flags.
 	quietRetries  bool
-	noColor       bool
 	summaryOnly   bool
 	verboseOutput bool
 
@@ -236,7 +235,6 @@ func setupSuccessFailureFlags() {
 
 func setupOutputFlags() {
 	rootCmd.Flags().BoolVar(&quietRetries, "quiet-retries", false, "only show command output on final attempt")
-	rootCmd.Flags().BoolVar(&noColor, "no-color", false, "disable colored output")
 	rootCmd.Flags().BoolVar(&summaryOnly, "summary-only", false, "only show final summary")
 	rootCmd.Flags().BoolVarP(&verboseOutput, "verbose-output", "V", false, "show detailed timing and condition info")
 
@@ -259,7 +257,7 @@ func bindFlagsToViper() {
 		"stop-when-contains", "stop-when-not-contains", "stop-at", "condition-logic",
 		"retry-on-exit", "success-on-exit", "retry-if-contains", "success-contains",
 		"fail-if-contains", "success-regex", "retry-regex",
-		"quiet-retries", "no-color", "summary-only", "verbose-output",
+		"quiet-retries", "summary-only", "verbose-output",
 		"quiet", "log-file", "log-level",
 	}
 	

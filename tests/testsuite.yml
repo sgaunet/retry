@@ -949,17 +949,6 @@ testcases:
     - result.systemout ShouldContainSubstring "Backoff strategy:"
     - result.systemout ShouldContainSubstring "Command:"
 
-- name: test-no-color-mode
-  steps:
-  - type: exec
-    script: |
-      cd {{.venom.testsuite.workdir}}
-      go run ../cmd --no-color --max-tries 2 "echo 'no color test'"
-    assertions:
-    - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "[1/2] Attempting command..."
-    - result.systemout ShouldContainSubstring "│ no color test"
-
 - name: test-retry-delay-logging
   steps:
   - type: exec
