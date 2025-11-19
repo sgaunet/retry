@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sgaunet/retry/pkg/logger"
 	"github.com/sgaunet/retry/pkg/retry"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -242,12 +243,12 @@ func setupOutputFlags() {
 	rootCmd.Flags().BoolVar(&noColor, "no-color", false, "disable colored output")
 	rootCmd.Flags().BoolVar(&summaryOnly, "summary-only", false, "only show final summary")
 	rootCmd.Flags().BoolVarP(&verboseOutput, "verbose-output", "V", false, "show detailed timing and condition info")
-	
+
 	// New enhanced output flags from issue #21
 	rootCmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "minimal output (only show final result)")
 	rootCmd.Flags().BoolVar(&jsonMode, "json", false, "output results as JSON")
-	rootCmd.Flags().StringVar(&logFile, "log-file", "", "write logs to file")
-	rootCmd.Flags().StringVar(&logLevel, "log-level", "info", "set log level (error, warn, info, debug)")
+	rootCmd.Flags().StringVarP(&logFile, "log-file", "f", "", "write logs to file")
+	rootCmd.Flags().StringVarP(&logLevel, "log-level", "l", "info", "set log level (error, warn, info, debug)")
 }
 
 func setupEnvironmentBindings() {
@@ -317,15 +318,25 @@ func runRetry(cmd *cobra.Command, args []string) error {
 	if commandStr == "" {
 		return ErrCommandEmpty
 	}
-	
+
 	// Validate flag combinations
 	err := validateFlags(cmd)
 	if err != nil {
 		return err
 	}
 
+	// Initialize application logger for structured logging
+	appLogger, err := initializeAppLogger(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
+
+	// Log application startup
+	appLogger.Debug("retry command starting", "command", commandStr)
+
 	// Parse configuration
 	finalMaxTries := parseMaxTries(cmd)
+	appLogger.Debug("configuration parsed", "max-tries", finalMaxTries)
 
 	// Create enhanced logger based on flags
 	enhancedLogger := createEnhancedLogger(cmd)
@@ -338,7 +349,16 @@ func runRetry(cmd *cobra.Command, args []string) error {
 	}()
 
 	// Create and run retry with enhanced logging
-	return createAndRunRetryWithEnhancedLogging(commandStr, finalMaxTries, cmd, enhancedLogger)
+	err = createAndRunRetryWithEnhancedLogging(commandStr, finalMaxTries, cmd, enhancedLogger, appLogger)
+
+	// Log completion status
+	if err != nil {
+		appLogger.Debug("retry command failed", "error", err.Error())
+	} else {
+		appLogger.Debug("retry command completed successfully")
+	}
+
+	return err
 }
 
 // validateFlags validates flag combinations and values.
@@ -598,43 +618,115 @@ func createEnhancedLogger(cmd *cobra.Command) *retry.Logger {
 	return retry.NewLoggerWithFile(level, mode, noColor, finalLogFile)
 }
 
+// getEffectiveLogFile returns the effective log file path, respecting environment variables.
+func getEffectiveLogFile(cmd *cobra.Command) string {
+	if cmd.Flags().Changed("log-file") {
+		return logFile
+	}
+	if envLogFile := viper.GetString("log-file"); envLogFile != "" {
+		return envLogFile
+	}
+	return logFile
+}
+
+// getEffectiveLogLevel returns the effective log level, respecting environment variables.
+func getEffectiveLogLevel(cmd *cobra.Command) string {
+	if cmd.Flags().Changed("log-level") {
+		return logLevel
+	}
+	if envLogLevel := viper.GetString("log-level"); envLogLevel != "" {
+		return envLogLevel
+	}
+	return logLevel
+}
+
+// isQuietModeEnabled checks if quiet mode is enabled via flag or environment.
+func isQuietModeEnabled(cmd *cobra.Command) bool {
+	return quiet || (!cmd.Flags().Changed("quiet") && viper.GetBool("quiet"))
+}
+
+// initializeAppLogger creates a logger based on CLI flags for application-level logging.
+// This provides structured logging separate from the retry output logger.
+//
+//nolint:ireturn // Returning interface is intentional for dependency injection
+func initializeAppLogger(cmd *cobra.Command) (logger.Logger, error) {
+	quietMode := isQuietModeEnabled(cmd)
+	finalLogFile := getEffectiveLogFile(cmd)
+	finalLogLevel := getEffectiveLogLevel(cmd)
+
+	// Case 1: Quiet mode without file logging - use NoLogger (suppresses all output)
+	if quietMode && finalLogFile == "" {
+		return logger.NoLogger(), nil
+	}
+
+	// Case 2 & 3: File logging (with or without quiet mode)
+	if finalLogFile != "" {
+		appLogger, err := logger.NewFileLogger(finalLogLevel, finalLogFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create log file: %w", err)
+		}
+		return appLogger, nil
+	}
+
+	// Case 4: Default - log to stdout
+	return logger.NewLogger(finalLogLevel), nil
+}
+
 func createAndRunRetryWithEnhancedLogging(
 	commandStr string,
 	finalMaxTries uint,
 	cmd *cobra.Command,
-	logger *retry.Logger,
+	enhancedLogger *retry.Logger,
+	appLogger logger.Logger,
 ) error {
 	// Build stop conditions
+	appLogger.Debug("building stop conditions")
 	condition, err := buildStopConditions(cmd, finalMaxTries)
 	if err != nil {
+		appLogger.Error("failed to build stop conditions", "error", err.Error())
 		return fmt.Errorf("failed to build stop conditions: %w", err)
 	}
 
 	// Separate success conditions from stop conditions
 	result := separateConditions(condition)
-	
+	appLogger.Debug("conditions separated",
+		"stop_conditions", result.stopCondition != nil,
+		"success_conditions_count", len(result.successConditions))
+
 	// Create retry instance
+	appLogger.Debug("creating retry instance", "command", commandStr)
 	r, err := retry.NewRetry(commandStr, result.stopCondition)
 	if err != nil {
+		appLogger.Error("failed to create retry instance", "error", err.Error())
 		return fmt.Errorf("failed to create retry instance: %w", err)
 	}
-	
+
 	// Set success conditions separately
-	r.SetSuccessConditions(result.successConditions)
+	if len(result.successConditions) > 0 {
+		appLogger.Debug("setting success conditions", "count", len(result.successConditions))
+		r.SetSuccessConditions(result.successConditions)
+	}
 
 	// Build strategy
+	backoffType := getBackoffType(cmd)
+	appLogger.Debug("building backoff strategy", "type", backoffType)
 	strategy, err := buildStrategy(cmd)
 	if err != nil {
+		appLogger.Error("failed to build backoff strategy", "error", err.Error(), "type", backoffType)
 		return err
 	}
-	
+	appLogger.Debug("backoff strategy configured", "type", backoffType)
+
 	// Set backoff strategy and run with enhanced logging
 	r.SetBackoffStrategy(strategy)
-	err = r.RunWithEnhancedLogger(rootContext, logger)
+	appLogger.Debug("starting retry execution", "max-tries", finalMaxTries)
+	err = r.RunWithEnhancedLogger(rootContext, enhancedLogger, appLogger)
 	if err != nil {
+		appLogger.Debug("retry execution completed with error", "error", err.Error())
 		return fmt.Errorf("retry failed: %w", err)
 	}
 
+	appLogger.Debug("retry execution completed successfully")
 	return nil
 }
 
