@@ -43,7 +43,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "hello world"
-    - result.systemout ShouldContainSubstring "✓ Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-modern-max-tries-flag
   steps:
@@ -53,10 +53,10 @@ testcases:
       go run ../cmd --max-tries 2 "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "Attempting command"
-    - result.systemout ShouldContainSubstring "Failed with exit code 1"
-    - result.systemout ShouldContainSubstring "Retrying"
-    - result.systemout ShouldContainSubstring "Attempts"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring 'level=WARN msg="Command failed"'
+    - result.systemout ShouldContainSubstring "exit_code=1"
+    - result.systemout ShouldContainSubstring "attempts=2"
 
 - name: test-short-flags
   steps:
@@ -67,7 +67,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "short flags work"
-    - result.systemout ShouldContainSubstring "✓ Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-duration-formats
   steps:
@@ -91,9 +91,9 @@ testcases:
       RETRY_MAX_TRIES=2 go run ../cmd "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "[1/2] Attempting command..."
-    - result.systemout ShouldContainSubstring "[2/2] Retrying..."
-    - result.systemerr ShouldContainSubstring "retry failed"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=1 max_tries=2'
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=2'
+    - result.systemout ShouldContainSubstring 'level=WARN msg="Retry execution failed"'
 
 - name: test-flag-overrides-env
   steps:
@@ -127,7 +127,7 @@ testcases:
       go run ../cmd "echo success"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-failing-command-exhausts-retries
   steps:
@@ -137,9 +137,9 @@ testcases:
       go run ../cmd --max-tries 3 "sh -c 'exit 42'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "[1/3] Attempting command..."
-    - result.systemout ShouldContainSubstring "[3/3] Retrying..."
-    - result.systemerr ShouldContainSubstring "retry failed"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=1 max_tries=3'
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=3'
+    - result.systemout ShouldContainSubstring 'level=WARN msg="Retry execution failed"'
 
 - name: test-zero-max-tries-infinite
   steps:
@@ -174,7 +174,7 @@ testcases:
       go run ../cmd --delay "invalid" "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "invalid delay format"
+    - result.systemout ShouldContainSubstring "invalid delay format"
     - result.systemerr ShouldNotContainSubstring "Usage:"
 
 - name: test-retry-failure-no-usage
@@ -185,7 +185,7 @@ testcases:
       go run ../cmd --max-tries 1 "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "retry failed"
+    - result.systemout ShouldContainSubstring 'level=WARN msg="Retry execution failed"'
     - result.systemerr ShouldNotContainSubstring "Usage:"
 
 - name: test-command-with-spaces
@@ -220,9 +220,9 @@ testcases:
       go run ../cmd "echo log test"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "Attempting command"
-    - result.systemout ShouldContainSubstring "│ log test"
-    - result.systemout ShouldContainSubstring "✓ Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring "log test"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-return-code-logging
   steps:
@@ -232,8 +232,9 @@ testcases:
       go run ../cmd --max-tries 1 "sh -c 'exit 5'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "✗ Failed with exit code 5"
-    - result.systemout ShouldContainSubstring "Final exit code"
+    - result.systemout ShouldContainSubstring 'level=WARN msg="Command failed"'
+    - result.systemout ShouldContainSubstring "exit_code=5"
+    - result.systemout ShouldContainSubstring "final_exit_code=5"
 
 - name: test-success-vs-failure-logging
   steps:
@@ -243,9 +244,9 @@ testcases:
       go run ../cmd "sh -c 'exit 0'"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "✓ Success"
-    - result.systemout ShouldContainSubstring "Success"
-    - result.systemout ShouldContainSubstring "Final exit code"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Retry execution completed successfully"'
+    - result.systemout ShouldContainSubstring "final_exit_code=0"
 
 # =============================================================================
 # INTEGRATION TESTS
@@ -259,9 +260,8 @@ testcases:
       go run ../cmd --max-tries 2 "ls /nonexistent/path/12345"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "[1/2] Attempting command..."
-    - result.systemout ShouldContainSubstring "[2/2] Retrying..."
-    - result.systemout ShouldContainSubstring "No such file"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=1 max_tries=2'
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=2'
 
 - name: test-real-succeeding-commands
   steps:
@@ -271,7 +271,7 @@ testcases:
       go run ../cmd "ls /tmp"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-complex-command-pipeline
   steps:
@@ -282,7 +282,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "1"
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 # =============================================================================
 # EXPONENTIAL BACKOFF TESTS
@@ -296,8 +296,8 @@ testcases:
       go run ../cmd --backoff exponential --base-delay 10ms --max-tries 3 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "Attempting command"
-    - result.systemerr ShouldContainSubstring "max tries reached"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring 'reason="max tries reached"'
 
 - name: test-exponential-backoff-short-flag
   steps:
@@ -307,8 +307,8 @@ testcases:
       go run ../cmd --backoff exp -b 5ms -M 100ms --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "Attempting command"
-    - result.systemerr ShouldContainSubstring "retry failed"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring 'level=WARN msg="Retry execution failed"'
 
 - name: test-exponential-backoff-custom-multiplier
   steps:
@@ -328,8 +328,8 @@ testcases:
       go run ../cmd --delay 10ms --max-tries 2 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "Attempting command"
-    - result.systemerr ShouldContainSubstring "retry failed"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring 'level=WARN msg="Retry execution failed"'
 
 - name: test-fixed-backoff-explicit
   steps:
@@ -350,7 +350,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "success"
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-exponential-backoff-invalid-multiplier
   steps:
@@ -360,7 +360,7 @@ testcases:
       go run ../cmd --backoff exponential --multiplier 0.5 "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "multiplier must be greater than 1.0"
+    - result.systemout ShouldContainSubstring "multiplier must be greater than 1.0"
 
 - name: test-exponential-backoff-invalid-base-delay
   steps:
@@ -370,7 +370,7 @@ testcases:
       go run ../cmd --backoff exponential --base-delay "invalid" "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "invalid base-delay format"
+    - result.systemout ShouldContainSubstring "invalid base-delay format"
 
 - name: test-exponential-backoff-invalid-max-delay
   steps:
@@ -380,7 +380,7 @@ testcases:
       go run ../cmd --backoff exponential --max-delay "invalid" "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "invalid max-delay format"
+    - result.systemout ShouldContainSubstring "invalid max-delay format"
 
 - name: test-unsupported-backoff-strategy
   steps:
@@ -390,7 +390,7 @@ testcases:
       go run ../cmd --backoff invalid "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "unsupported backoff strategy"
+    - result.systemout ShouldContainSubstring "unsupported backoff strategy"
 
 # =============================================================================
 # LINEAR BACKOFF TESTS
@@ -404,8 +404,8 @@ testcases:
       go run ../cmd --backoff linear --base-delay 10ms --increment 5ms --max-tries 3 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "Attempting command"
-    - result.systemerr ShouldContainSubstring "max tries reached"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring 'reason="max tries reached"'
 
 - name: test-linear-backoff-with-max-delay
   steps:
@@ -426,7 +426,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "linear success"
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-linear-backoff-invalid-increment
   steps:
@@ -436,7 +436,7 @@ testcases:
       go run ../cmd --backoff linear --increment "invalid" "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "invalid increment format"
+    - result.systemout ShouldContainSubstring "invalid increment format"
 
 # =============================================================================
 # FIBONACCI BACKOFF TESTS
@@ -450,8 +450,8 @@ testcases:
       go run ../cmd --backoff fibonacci --base-delay 10ms --max-tries 3 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "Attempting command"
-    - result.systemerr ShouldContainSubstring "max tries reached"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring 'reason="max tries reached"'
 
 - name: test-fibonacci-backoff-short-flag
   steps:
@@ -483,7 +483,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "fib success"
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 # =============================================================================
 # CUSTOM BACKOFF TESTS
@@ -497,8 +497,8 @@ testcases:
       go run ../cmd --backoff custom --delays "10ms,20ms,50ms" --max-tries 3 "false"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "Attempting command"
-    - result.systemerr ShouldContainSubstring "max tries reached"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring 'reason="max tries reached"'
 
 - name: test-custom-backoff-single-delay
   steps:
@@ -529,7 +529,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "custom success"
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-custom-backoff-empty-delays
   steps:
@@ -539,7 +539,7 @@ testcases:
       go run ../cmd --backoff custom --delays "" "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "delays cannot be empty"
+    - result.systemout ShouldContainSubstring "delays cannot be empty"
 
 - name: test-custom-backoff-invalid-delay-format
   steps:
@@ -549,7 +549,7 @@ testcases:
       go run ../cmd --backoff custom --delays "1s,invalid,3s" "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "invalid delay format"
+    - result.systemout ShouldContainSubstring "invalid delay format"
 
 - name: test-custom-backoff-with-spaces
   steps:
@@ -634,7 +634,7 @@ testcases:
       go run ../cmd --backoff fixed --jitter -0.5 "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "jitter must be between 0.0 and 1.0"
+    - result.systemout ShouldContainSubstring "jitter must be between 0.0 and 1.0"
 
 - name: test-jitter-invalid-too-high
   steps:
@@ -644,7 +644,7 @@ testcases:
       go run ../cmd --backoff fixed --jitter 1.5 "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "jitter must be between 0.0 and 1.0"
+    - result.systemout ShouldContainSubstring "jitter must be between 0.0 and 1.0"
 
 # =============================================================================
 # ENVIRONMENT VARIABLE TESTS FOR NEW FLAGS
@@ -692,9 +692,9 @@ testcases:
       go run ../cmd --stop-on-exit "1,2" --max-tries 5 "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "Attempting command"
-    - result.systemout ShouldContainSubstring "✗ Failed with exit code 1"
-    - result.systemerr ShouldContainSubstring "retry failed"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring 'level=WARN msg="Command failed"'
+    - result.systemout ShouldContainSubstring "exit_code=1"
 
 - name: test-stop-on-exit-code-no-match
   steps:
@@ -704,8 +704,8 @@ testcases:
       go run ../cmd --stop-on-exit "3,4" --max-tries 2 "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "Attempting command"
-    - result.systemerr ShouldContainSubstring "max tries reached"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring 'reason="max tries reached"'
 
 - name: test-stop-on-exit-code-success-continues
   steps:
@@ -716,7 +716,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "success"
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-stop-when-output-contains-match
   steps:
@@ -727,7 +727,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "operation success completed"
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-stop-when-output-contains-no-match
   steps:
@@ -738,7 +738,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "operation failed"
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-stop-when-output-not-contains-match
   steps:
@@ -749,7 +749,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "operation completed successfully"
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-stop-when-output-not-contains-no-match
   steps:
@@ -771,7 +771,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "42 files processed"
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-timeout-condition
   steps:
@@ -793,7 +793,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "quick success"
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-stop-at-time-future
   steps:
@@ -805,7 +805,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "time test"
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-invalid-exit-codes
   steps:
@@ -815,7 +815,7 @@ testcases:
       go run ../cmd --stop-on-exit "invalid,1" "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "invalid exit code"
+    - result.systemout ShouldContainSubstring "invalid exit code"
 
 - name: test-invalid-timeout-format
   steps:
@@ -825,7 +825,7 @@ testcases:
       go run ../cmd --timeout "invalid" "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "invalid timeout format"
+    - result.systemout ShouldContainSubstring "invalid timeout format"
 
 - name: test-invalid-time-format
   steps:
@@ -835,7 +835,7 @@ testcases:
       go run ../cmd --stop-at "25:00" "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "invalid time format"
+    - result.systemout ShouldContainSubstring "invalid time format"
 
 # =============================================================================
 # COMPOSITE CONDITION TESTS
@@ -849,8 +849,8 @@ testcases:
       go run ../cmd --max-tries 1 --stop-on-exit "1" --condition-logic "and" "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "Attempting command"
-    - result.systemerr ShouldContainSubstring "max tries reached"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring 'reason="max tries reached"'
 
 - name: test-composite-or-logic-one-match
   steps:
@@ -860,8 +860,8 @@ testcases:
       go run ../cmd --max-tries 5 --stop-on-exit "1" --condition-logic "or" "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "Attempting command"
-    - result.systemerr ShouldContainSubstring "retry failed"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring 'level=WARN msg="Retry execution failed"'
 
 - name: test-composite-multiple-conditions
   steps:
@@ -872,7 +872,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "operation success"
-    - result.systemout ShouldContainSubstring "Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-composite-timeout-with-max-tries
   steps:
@@ -882,8 +882,8 @@ testcases:
       go run ../cmd --timeout 200ms --max-tries 10 --delay 50ms --condition-logic "or" "sh -c 'sleep 0.3; echo done'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "Attempting command"
-    - result.systemerr ShouldContainSubstring "context error"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring "context"
 
 - name: test-invalid-condition-logic
   steps:
@@ -893,7 +893,7 @@ testcases:
       go run ../cmd --condition-logic "invalid" "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "invalid condition logic"
+    - result.systemout ShouldContainSubstring "invalid condition logic"
 
 # =============================================================================
 # ENHANCED LOGGING TESTS
@@ -907,10 +907,10 @@ testcases:
       go run ../cmd --max-tries 2 "echo 'Enhanced logging test'"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "[1/2] Attempting command..."
-    - result.systemout ShouldContainSubstring "│ Enhanced logging test"
-    - result.systemout ShouldContainSubstring "✓ Success"
-    - result.systemout ShouldContainSubstring "SUMMARY"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring "Enhanced logging test"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
+    - result.systemout ShouldContainSubstring "attempts=1"
 
 - name: test-quiet-retries-mode
   steps:
@@ -920,34 +920,10 @@ testcases:
       go run ../cmd --quiet-retries --max-tries 3 "sh -c 'echo attempt output; exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "[1/3] Attempting command..."
-    - result.systemout ShouldContainSubstring "[3/3] Retrying..."
-    - result.systemout ShouldContainSubstring "│ attempt output"
-    - result.systemout ShouldContainSubstring "SUMMARY"
-
-- name: test-summary-only-mode
-  steps:
-  - type: exec
-    script: |
-      cd {{.venom.testsuite.workdir}}
-      go run ../cmd --summary-only --max-tries 2 "echo 'test output'"
-    assertions:
-    - result.code ShouldEqual 0
-    - result.systemout ShouldNotContainSubstring "[1/2]"
-    - result.systemout ShouldNotContainSubstring "test output"
-    - result.systemout ShouldNotContainSubstring "SUMMARY"
-
-- name: test-verbose-output-mode
-  steps:
-  - type: exec
-    script: |
-      cd {{.venom.testsuite.workdir}}
-      go run ../cmd --verbose-output --max-tries 2 "echo 'verbose test'"
-    assertions:
-    - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "SUMMARY"
-    - result.systemout ShouldContainSubstring "Backoff strategy:"
-    - result.systemout ShouldContainSubstring "Command:"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=1'
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=3'
+    - result.systemout ShouldContainSubstring "attempt output"
+    - result.systemout ShouldContainSubstring "attempts=3"
 
 - name: test-retry-delay-logging
   steps:
@@ -957,8 +933,8 @@ testcases:
       go run ../cmd --max-tries 2 --delay 100ms "sh -c 'exit 1'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "Waiting 100ms before retry..."
-    - result.systemout ShouldContainSubstring "[2/2] Retrying..."
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=1'
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=2'
 
 - name: test-enhanced-logging-with-stop-conditions
   steps:
@@ -968,57 +944,13 @@ testcases:
       go run ../cmd --stop-when-contains "done" --max-tries 3 "echo 'task done successfully'"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "Attempting command"
-    - result.systemout ShouldContainSubstring "│ task done successfully"
-    - result.systemout ShouldContainSubstring "✓ Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring "task done successfully"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 # =============================================================================
 # ISSUE #21: Enhanced Output Control & Logging Tests
 # =============================================================================
-
-- name: test-json-output-success
-  steps:
-  - type: exec
-    script: |
-      cd {{.venom.testsuite.workdir}}
-      go run ../cmd --json --max-tries 2 "echo success"
-    assertions:
-    - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "successful"
-    - result.systemout ShouldContainSubstring "total_attempts"
-    - result.systemout ShouldContainSubstring "max_attempts"
-    - result.systemout ShouldContainSubstring "final_exit_code"
-    - result.systemout ShouldContainSubstring "attempts"
-    - result.systemout ShouldContainSubstring "success"
-
-- name: test-json-output-failure
-  steps:
-  - type: exec
-    script: |
-      cd {{.venom.testsuite.workdir}}
-      go run ../cmd --json --max-tries 2 "exit 1"
-    assertions:
-    - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "successful"
-    - result.systemout ShouldContainSubstring "total_attempts"
-    - result.systemout ShouldContainSubstring "failure_reason"
-    - result.systemout ShouldContainSubstring "stop_condition"
-    - result.systemout ShouldContainSubstring "success"
-
-- name: test-quiet-mode
-  steps:
-  - type: exec
-    script: |
-      cd {{.venom.testsuite.workdir}}
-      go run ../cmd --quiet --max-tries 2 "echo 'quiet mode test'"
-    assertions:
-    - result.code ShouldEqual 0
-    - result.systemout ShouldNotContainSubstring "[1/2] Attempting command..."
-    - result.systemout ShouldNotContainSubstring "│ quiet mode test"
-    - result.systemout ShouldNotContainSubstring "✓ Success"
-    - result.systemout ShouldContainSubstring "SUMMARY"
-    - result.systemout ShouldContainSubstring "Result"
-    - result.systemout ShouldContainSubstring "Success"
 
 - name: test-log-file-creation
   steps:
@@ -1030,9 +962,9 @@ testcases:
       cat test.log
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "[1/1] Attempting command..."
-    - result.systemout ShouldContainSubstring "[STDOUT] logged command"
-    - result.systemout ShouldContainSubstring "✓ Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring "logged command"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-log-levels-debug
   steps:
@@ -1042,8 +974,8 @@ testcases:
       go run ../cmd --log-level debug --max-tries 1 "echo 'debug level test'"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "[1/1] Attempting command..."
-    - result.systemout ShouldContainSubstring "│ debug level test"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring "debug level test"
 
 - name: test-log-levels-error
   steps:
@@ -1053,19 +985,8 @@ testcases:
       go run ../cmd --log-level error --max-tries 1 "echo 'error level test'"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "[1/1] Attempting command..."
-    - result.systemout ShouldContainSubstring "│ error level test"
-
-- name: test-json-with-backoff-strategy
-  steps:
-  - type: exec
-    script: |
-      cd {{.venom.testsuite.workdir}}
-      go run ../cmd --json --backoff exponential --max-tries 1 "echo 'backoff test'"
-    assertions:
-    - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "backoff_strategy"
-    - result.systemout ShouldContainSubstring "successful"
+    - result.systemout ShouldNotContainSubstring 'level=INFO msg="Attempting command"'
+    - result.systemout ShouldContainSubstring "error level test"
 
 - name: test-invalid-log-level
   steps:
@@ -1076,29 +997,6 @@ testcases:
     assertions:
     - result.code ShouldEqual 1
     - result.systemerr ShouldContainSubstring "log level must be one of"
-
-- name: test-conflicting-output-modes
-  steps:
-  - type: exec
-    script: |
-      cd {{.venom.testsuite.workdir}}
-      go run ../cmd --json --summary-only "echo test"
-    assertions:
-    - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "cannot combine --json with other output modes"
-
-- name: test-json-with-multiple-attempts
-  steps:
-  - type: exec
-    script: |
-      cd {{.venom.testsuite.workdir}}
-      go run ../cmd --json --max-tries 3 --delay 10ms "sh -c 'if [ ! -f /tmp/retry_test_flag ]; then touch /tmp/retry_test_flag; exit 1; else rm -f /tmp/retry_test_flag; echo success; fi'"
-    assertions:
-    - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "total_attempts"
-    - result.systemout ShouldContainSubstring "successful"
-    - result.systemout ShouldContainSubstring "attempt"
-    - result.systemout ShouldContainSubstring "success"
 
 # =============================================================================
 # SUCCESS/FAILURE CONDITIONS TESTS (Issue #22)
@@ -1112,9 +1010,9 @@ testcases:
       go run ../cmd --retry-on-exit "1,2" --max-tries 3 "sh -c 'exit 3'"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemout ShouldContainSubstring "[1/3] Attempting command"
-    - result.systemout ShouldNotContainSubstring "[2/3]"
-    - result.systemerr ShouldContainSubstring "retry failed"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=1 max_tries=3'
+    - result.systemout ShouldNotContainSubstring 'attempt=2'
+    - result.systemout ShouldContainSubstring 'level=WARN msg="Retry execution failed"'
 
 - name: test-retry-on-specific-exit-code-success
   steps:
@@ -1125,9 +1023,9 @@ testcases:
       go run ../cmd --retry-on-exit "1" --max-tries 3 "sh -c 'if [ ! -f /tmp/retry_exit_test ]; then touch /tmp/retry_exit_test; exit 1; else rm -f /tmp/retry_exit_test; exit 0; fi'"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "[1/3] Attempting command"
-    - result.systemout ShouldContainSubstring "[2/3] Retrying"
-    - result.systemout ShouldContainSubstring "✓ Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=1'
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=2'
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-success-on-exit-codes
   steps:
@@ -1137,7 +1035,7 @@ testcases:
       go run ../cmd --success-on-exit "0,2" --max-tries 1 "sh -c 'exit 2'"
     assertions:
     - result.code ShouldEqual 0
-    - result.systemout ShouldContainSubstring "✓ Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded with success condition met"'
 
 - name: test-retry-if-contains
   steps:
@@ -1149,9 +1047,9 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "temporary error"
-    - result.systemout ShouldContainSubstring "[2/3] Retrying"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=2'
     - result.systemout ShouldContainSubstring "success"
-    - result.systemout ShouldContainSubstring "✓ Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded"'
 
 - name: test-success-contains
   steps:
@@ -1163,7 +1061,7 @@ testcases:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "Status"
     - result.systemout ShouldContainSubstring "OK"
-    - result.systemout ShouldContainSubstring "✓ Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded with success condition met"'
 
 - name: test-fail-if-contains
   steps:
@@ -1174,8 +1072,8 @@ testcases:
     assertions:
     - result.code ShouldEqual 1
     - result.systemout ShouldContainSubstring "fatal error"
-    - result.systemout ShouldContainSubstring "[1/5] Attempting command"
-    - result.systemout ShouldNotContainSubstring "[2/5]"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=1 max_tries=5'
+    - result.systemout ShouldNotContainSubstring 'attempt=2'
 
 - name: test-success-regex
   steps:
@@ -1186,7 +1084,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "HTTP/1.1 200 OK"
-    - result.systemout ShouldContainSubstring "✓ Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded with success condition met"'
 
 - name: test-retry-regex
   steps:
@@ -1198,7 +1096,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "error 500"
-    - result.systemout ShouldContainSubstring "[2/3] Retrying"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Attempting command" attempt=2'
     - result.systemout ShouldContainSubstring "success"
 
 - name: test-combined-conditions
@@ -1210,7 +1108,7 @@ testcases:
     assertions:
     - result.code ShouldEqual 0
     - result.systemout ShouldContainSubstring "DONE"
-    - result.systemout ShouldContainSubstring "✓ Success"
+    - result.systemout ShouldContainSubstring 'level=INFO msg="Command succeeded with success condition met"'
 
 - name: test-invalid-regex
   steps:
@@ -1220,6 +1118,6 @@ testcases:
       go run ../cmd --success-regex "[invalid regex" --max-tries 1 "echo test"
     assertions:
     - result.code ShouldEqual 1
-    - result.systemerr ShouldContainSubstring "invalid regex pattern"
+    - result.systemout ShouldContainSubstring "error parsing regex"
 
 

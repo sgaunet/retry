@@ -100,6 +100,9 @@ func (r *Retry) RunWithLogger(ctx context.Context, appLogger logger.Logger) erro
 		ctx = context.Background()
 	}
 
+	// Ensure condition contexts are properly cancelled to prevent goroutine leaks
+	defer r.cleanupCondition()
+
 	if appLogger != nil {
 		maxTries := r.extractMaxTriesFromCondition()
 		backoffType := "none"
@@ -118,6 +121,27 @@ func (r *Retry) RunWithLogger(ctx context.Context, appLogger logger.Logger) erro
 	r.logExecutionResult(err, appLogger)
 
 	return r.getFinalError(ctx, err)
+}
+
+// cleanupCondition cancels the condition context if it supports cancellation.
+// This prevents goroutine leaks from monitoring goroutines.
+func (r *Retry) cleanupCondition() {
+	// Define an interface for conditions that can be cancelled
+	type cancellableCondition interface {
+		Cancel()
+	}
+
+	// Cancel main condition if it supports cancellation
+	if cancellable, ok := r.condition.(cancellableCondition); ok {
+		cancellable.Cancel()
+	}
+
+	// Cancel success conditions if they support cancellation
+	for _, successCond := range r.successConditions {
+		if cancellable, ok := successCond.(cancellableCondition); ok {
+			cancellable.Cancel()
+		}
+	}
 }
 
 // logExecutionResult logs the final result of the retry execution.
@@ -294,6 +318,8 @@ func (r *Retry) getLastExitCode() int {
 }
 
 // executeSingleTryWithLogger executes a single retry attempt with logging.
+//
+//nolint:cyclop // Complex error handling and condition management is necessary
 func (r *Retry) executeSingleTryWithLogger(ctx context.Context, appLogger logger.Logger) error {
 	if r.condition != nil {
 		r.condition.StartTry()
@@ -309,8 +335,16 @@ func (r *Retry) executeSingleTryWithLogger(ctx context.Context, appLogger logger
 		appLogger.Debug("Executing command", "attempt", r.tries, "command", r.cmd)
 	}
 
+	// Use the condition's context for command execution (which includes timeout)
+	// If either the condition context or the signal context is cancelled, the command will stop
+	cmdCtx := r.condition.GetCtx() //nolint:contextcheck // Intentionally using condition's context
+	if ctx.Err() != nil {
+		// If signal context is already cancelled, use it directly
+		cmdCtx = ctx
+	}
+
 	startTime := time.Now()
-	rc, stdout, stderr, err := execCommandWithOutputAndLogger(ctx, r.cmd, appLogger)
+	rc, stdout, stderr, err := execCommandWithOutputAndLogger(cmdCtx, r.cmd, appLogger)
 	duration := time.Since(startTime)
 	r.lastExitCode = rc
 

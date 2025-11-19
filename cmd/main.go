@@ -337,7 +337,7 @@ func runRetry(cmd *cobra.Command, args []string) error {
 	// Handle errors - detailed failure already logged in retry execution
 	if err != nil {
 		appLogger.Debug("retry command failed", "error", err.Error())
-		os.Exit(1)
+		return err
 	}
 
 	appLogger.Debug("retry command completed successfully")
@@ -1160,7 +1160,8 @@ func main() {
 	err := rootCmd.Execute()
 	if err != nil {
 		// Check if the error is due to context cancellation (signal received)
-		if errors.Is(err, context.Canceled) {
+		// Only treat as signal if we actually received a signal
+		if errors.Is(err, context.Canceled) && receivedSignal != nil {
 			// Return appropriate exit code based on signal type
 			// Note: exitAfterDefer is intentional - we want immediate exit on signals
 			switch receivedSignal {
