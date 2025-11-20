@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"go.uber.org/goleak"
 )
 
 // Mock condition for testing
@@ -62,10 +64,12 @@ func (m *mockEnhancedCondition) SetLastOutput(stdout, stderr string) {
 }
 
 func TestNewCompositeCondition_AND(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cond1 := newMockCondition(false)
 	cond2 := newMockCondition(false)
 
 	composite := NewCompositeCondition(LogicAND, cond1, cond2)
+	defer composite.Cancel()
 
 	if composite == nil {
 		t.Fatal("NewCompositeCondition should return non-nil condition")
@@ -81,10 +85,12 @@ func TestNewCompositeCondition_AND(t *testing.T) {
 }
 
 func TestNewCompositeCondition_OR(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cond1 := newMockCondition(false)
 	cond2 := newMockCondition(false)
 
 	composite := NewCompositeCondition(LogicOR, cond1, cond2)
+	defer composite.Cancel()
 
 	if composite.logic != LogicOR {
 		t.Errorf("Expected LogicOR, got %v", composite.logic)
@@ -92,9 +98,11 @@ func TestNewCompositeCondition_OR(t *testing.T) {
 }
 
 func TestCompositeCondition_GetCtx_Background(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cond1 := newMockCondition(false)
 	cond2 := newMockCondition(false)
 	composite := NewCompositeCondition(LogicOR, cond1, cond2)
+	defer composite.Cancel()
 
 	ctx := composite.GetCtx()
 	// The composite creates its own context, so it won't be exactly context.Background()
@@ -108,9 +116,11 @@ func TestCompositeCondition_GetCtx_Background(t *testing.T) {
 }
 
 func TestCompositeCondition_GetCtx_WithTimeout(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	timeout1 := NewStopOnTimeout(1 * time.Second)
 	cond2 := newMockCondition(false)
 	composite := NewCompositeCondition(LogicOR, timeout1, cond2)
+	defer composite.Cancel()
 
 	// Since the current implementation returns the first context with an error,
 	// and timeout context doesn't have an error initially, it returns composite's context
@@ -122,9 +132,11 @@ func TestCompositeCondition_GetCtx_WithTimeout(t *testing.T) {
 }
 
 func TestCompositeCondition_IsLimitReached_AND_AllFalse(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cond1 := newMockCondition(false)
 	cond2 := newMockCondition(false)
 	composite := NewCompositeCondition(LogicAND, cond1, cond2)
+	defer composite.Cancel()
 
 	if composite.IsLimitReached() {
 		t.Error("AND condition should return false when all conditions are false")
@@ -132,9 +144,11 @@ func TestCompositeCondition_IsLimitReached_AND_AllFalse(t *testing.T) {
 }
 
 func TestCompositeCondition_IsLimitReached_AND_OneFalse(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cond1 := newMockCondition(true)
 	cond2 := newMockCondition(false)
 	composite := NewCompositeCondition(LogicAND, cond1, cond2)
+	defer composite.Cancel()
 
 	if composite.IsLimitReached() {
 		t.Error("AND condition should return false when at least one condition is false")
@@ -142,9 +156,11 @@ func TestCompositeCondition_IsLimitReached_AND_OneFalse(t *testing.T) {
 }
 
 func TestCompositeCondition_IsLimitReached_AND_AllTrue(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cond1 := newMockCondition(true)
 	cond2 := newMockCondition(true)
 	composite := NewCompositeCondition(LogicAND, cond1, cond2)
+	defer composite.Cancel()
 
 	if !composite.IsLimitReached() {
 		t.Error("AND condition should return true when all conditions are true")
@@ -152,9 +168,11 @@ func TestCompositeCondition_IsLimitReached_AND_AllTrue(t *testing.T) {
 }
 
 func TestCompositeCondition_IsLimitReached_OR_AllFalse(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cond1 := newMockCondition(false)
 	cond2 := newMockCondition(false)
 	composite := NewCompositeCondition(LogicOR, cond1, cond2)
+	defer composite.Cancel()
 
 	if composite.IsLimitReached() {
 		t.Error("OR condition should return false when all conditions are false")
@@ -162,9 +180,11 @@ func TestCompositeCondition_IsLimitReached_OR_AllFalse(t *testing.T) {
 }
 
 func TestCompositeCondition_IsLimitReached_OR_OneTrue(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cond1 := newMockCondition(true)
 	cond2 := newMockCondition(false)
 	composite := NewCompositeCondition(LogicOR, cond1, cond2)
+	defer composite.Cancel()
 
 	if !composite.IsLimitReached() {
 		t.Error("OR condition should return true when at least one condition is true")
@@ -172,9 +192,11 @@ func TestCompositeCondition_IsLimitReached_OR_OneTrue(t *testing.T) {
 }
 
 func TestCompositeCondition_IsLimitReached_OR_AllTrue(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cond1 := newMockCondition(true)
 	cond2 := newMockCondition(true)
 	composite := NewCompositeCondition(LogicOR, cond1, cond2)
+	defer composite.Cancel()
 
 	if !composite.IsLimitReached() {
 		t.Error("OR condition should return true when all conditions are true")
@@ -182,9 +204,11 @@ func TestCompositeCondition_IsLimitReached_OR_AllTrue(t *testing.T) {
 }
 
 func TestCompositeCondition_StartTry(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cond1 := newMockCondition(false)
 	cond2 := newMockCondition(false)
 	composite := NewCompositeCondition(LogicOR, cond1, cond2)
+	defer composite.Cancel()
 
 	composite.StartTry()
 
@@ -198,9 +222,11 @@ func TestCompositeCondition_StartTry(t *testing.T) {
 }
 
 func TestCompositeCondition_EndTry(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cond1 := newMockCondition(false)
 	cond2 := newMockCondition(false)
 	composite := NewCompositeCondition(LogicOR, cond1, cond2)
+	defer composite.Cancel()
 
 	composite.EndTry()
 
@@ -214,9 +240,11 @@ func TestCompositeCondition_EndTry(t *testing.T) {
 }
 
 func TestCompositeCondition_SetLastExitCode(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cond1 := newMockEnhancedCondition(false)
 	cond2 := newMockCondition(false)
 	composite := NewCompositeCondition(LogicOR, cond1, cond2)
+	defer composite.Cancel()
 
 	composite.SetLastExitCode(42)
 
@@ -226,9 +254,11 @@ func TestCompositeCondition_SetLastExitCode(t *testing.T) {
 }
 
 func TestCompositeCondition_SetLastOutput(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cond1 := newMockEnhancedCondition(false)
 	cond2 := newMockCondition(false)
 	composite := NewCompositeCondition(LogicOR, cond1, cond2)
+	defer composite.Cancel()
 
 	composite.SetLastOutput("test stdout", "test stderr")
 
@@ -242,7 +272,9 @@ func TestCompositeCondition_SetLastOutput(t *testing.T) {
 }
 
 func TestCompositeCondition_EmptyConditions(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	composite := NewCompositeCondition(LogicAND)
+	defer composite.Cancel()
 
 	// Composite creates its own context, not exactly background
 	ctx := composite.GetCtx()
@@ -255,32 +287,38 @@ func TestCompositeCondition_EmptyConditions(t *testing.T) {
 		t.Error("AND of empty conditions should return true")
 	}
 
-	composite = NewCompositeCondition(LogicOR)
+	composite2 := NewCompositeCondition(LogicOR)
+	defer composite2.Cancel()
 	// OR of empty set should be false
-	if composite.IsLimitReached() {
+	if composite2.IsLimitReached() {
 		t.Error("OR of empty conditions should return false")
 	}
 }
 
 func TestCompositeCondition_SingleCondition(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cond1 := newMockCondition(true)
 	composite := NewCompositeCondition(LogicAND, cond1)
+	defer composite.Cancel()
 
 	if !composite.IsLimitReached() {
 		t.Error("Single condition AND should return the condition's value")
 	}
 
-	composite = NewCompositeCondition(LogicOR, cond1)
-	if !composite.IsLimitReached() {
+	composite2 := NewCompositeCondition(LogicOR, cond1)
+	defer composite2.Cancel()
+	if !composite2.IsLimitReached() {
 		t.Error("Single condition OR should return the condition's value")
 	}
 }
 
 func TestCompositeCondition_MixedConditionTypes(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	// Mix regular and enhanced conditions
 	timeout := NewStopOnTimeout(1 * time.Hour) // Far in future
 	exitCode := NewStopOnExitCode([]int{1})
 	composite := NewCompositeCondition(LogicOR, timeout, exitCode)
+	defer composite.Cancel()
 
 	// Initially both should be false
 	if composite.IsLimitReached() {
