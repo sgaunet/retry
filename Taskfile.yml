@@ -19,7 +19,7 @@ tasks:
       - CGO_ENABLED=0 go build -o {{.BINFILE}} cmd/*.go
     # silent: true
 
-  linter:
+  lint:
     desc: "Run linter"
     cmds:
       - golangci-lint run
