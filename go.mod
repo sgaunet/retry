@@ -4,7 +4,7 @@ go 1.24
 
 require (
 	github.com/go-andiamo/splitter v1.2.5
-	github.com/spf13/cobra v1.10.1
+	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/goleak v1.3.0
