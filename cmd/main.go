@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sgaunet/retry/pkg/config"
 	"github.com/sgaunet/retry/pkg/logger"
 	"github.com/sgaunet/retry/pkg/retry"
 	"github.com/spf13/cobra"
@@ -97,6 +98,13 @@ var (
 	policyName   string
 	listPolicies bool
 	showPolicy   string
+
+	// Config file flags.
+	configFile  string
+	profileName string
+
+	// Loaded config profile (populated by initConfig).
+	loadedProfile config.ProfileConfig
 )
 
 var rootCmd = &cobra.Command{
@@ -189,7 +197,26 @@ if it contains spaces or special characters.`,
   retry --list-policies
 
   # Show details for a specific policy
-  retry --show-policy standard`,
+  retry --show-policy standard
+
+  # Configuration File (Issue #23)
+  # Use a named profile from retry.yaml
+  retry --profile api-calls "curl -f https://api.example.com"
+
+  # Use a specific config file
+  retry --config /etc/retry.yaml --profile ci-tests "make test"
+
+  # Override profile settings with CLI flags
+  retry --profile api-calls --max-tries 1 "curl -f https://api.example.com"
+
+  # Initialize a config template
+  retry config init
+
+  # Show effective configuration
+  retry config show --profile api-calls
+
+  # Validate config file
+  retry config validate`,
 	Args: func(_ *cobra.Command, args []string) error {
 		// Check if command is provided as positional argument
 		if len(args) > 0 {
@@ -287,6 +314,11 @@ func setupPolicyFlags() {
 	rootCmd.Flags().StringVar(&showPolicy, "show-policy", "", "show details for a specific policy")
 }
 
+func setupConfigFlags() {
+	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "path to config file")
+	rootCmd.PersistentFlags().StringVar(&profileName, "profile", "", "named profile from config file")
+}
+
 func setupEnvironmentBindings() {
 	viper.SetEnvPrefix("RETRY")
 	viper.AutomaticEnv()
@@ -320,9 +352,131 @@ func init() {
 	setupSuccessFailureFlags()
 	setupOutputFlags()
 	setupPolicyFlags()
+	setupConfigFlags()
+	setupConfigCommands()
 
 	setupEnvironmentBindings()
 	bindFlagsToViper()
+
+	cobra.OnInitialize(initConfig)
+}
+
+// initConfig loads the YAML config file and applies profile values to globals
+// for any flag not explicitly set on the CLI.
+func initConfig() {
+	path := config.FindConfigFile(configFile)
+	if path == "" {
+		return
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load config %s: %v\n", path, err)
+		return
+	}
+
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: config validation error in %s: %v\n", path, err)
+		return
+	}
+
+	profile, err := cfg.GetProfile(profileName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		return
+	}
+
+	profile.ExpandEnvVars()
+
+	loadedProfile = profile
+
+	applyProfileToGlobals(rootCmd, profile)
+}
+
+// applyProfileToGlobals sets global variables from profile values for any flag
+// not explicitly changed via CLI. This runs before RunE, so env vars and CLI
+// flags still take precedence via viper and cmd.Flags().Changed() checks.
+//
+//nolint:cyclop,gocognit,gocyclo,funlen // Many fields to apply, but each is a simple conditional assignment
+func applyProfileToGlobals(cmd *cobra.Command, p config.ProfileConfig) {
+	if p.MaxTries != nil && !cmd.Flags().Changed("max-tries") {
+		maxTries = *p.MaxTries
+	}
+	if p.Delay != "" && !cmd.Flags().Changed("delay") {
+		delay = p.Delay
+	}
+	if p.Backoff != "" && !cmd.Flags().Changed("backoff") {
+		backoff = p.Backoff
+	}
+	if p.BaseDelay != "" && !cmd.Flags().Changed("base-delay") {
+		baseDelay = p.BaseDelay
+	}
+	if p.MaxDelay != "" && !cmd.Flags().Changed("max-delay") {
+		maxDelay = p.MaxDelay
+	}
+	if p.Multiplier != nil && !cmd.Flags().Changed("multiplier") {
+		multiplier = *p.Multiplier
+	}
+	if p.Increment != "" && !cmd.Flags().Changed("increment") {
+		increment = p.Increment
+	}
+	if p.Jitter != nil && !cmd.Flags().Changed("jitter") {
+		jitter = *p.Jitter
+	}
+	if p.Delays != "" && !cmd.Flags().Changed("delays") {
+		delays = p.Delays
+	}
+	if p.Timeout != "" && !cmd.Flags().Changed("timeout") {
+		timeout = p.Timeout
+	}
+	if p.StopOnExit != "" && !cmd.Flags().Changed("stop-on-exit") {
+		stopOnExit = p.StopOnExit
+	}
+	if p.StopWhenContains != "" && !cmd.Flags().Changed("stop-when-contains") {
+		stopWhenContains = p.StopWhenContains
+	}
+	if p.StopWhenNotContains != "" && !cmd.Flags().Changed("stop-when-not-contains") {
+		stopWhenNotContains = p.StopWhenNotContains
+	}
+	if p.StopAt != "" && !cmd.Flags().Changed("stop-at") {
+		stopAt = p.StopAt
+	}
+	if p.ConditionLogic != "" && !cmd.Flags().Changed("condition-logic") {
+		conditionLogic = p.ConditionLogic
+	}
+	if p.RetryOnExit != "" && !cmd.Flags().Changed("retry-on-exit") {
+		retryOnExit = p.RetryOnExit
+	}
+	if p.SuccessOnExit != "" && !cmd.Flags().Changed("success-on-exit") {
+		successOnExit = p.SuccessOnExit
+	}
+	if p.RetryIfContains != "" && !cmd.Flags().Changed("retry-if-contains") {
+		retryIfContains = p.RetryIfContains
+	}
+	if p.SuccessContains != "" && !cmd.Flags().Changed("success-contains") {
+		successContains = p.SuccessContains
+	}
+	if p.FailIfContains != "" && !cmd.Flags().Changed("fail-if-contains") {
+		failIfContains = p.FailIfContains
+	}
+	if p.SuccessRegex != "" && !cmd.Flags().Changed("success-regex") {
+		successRegex = p.SuccessRegex
+	}
+	if p.RetryRegex != "" && !cmd.Flags().Changed("retry-regex") {
+		retryRegex = p.RetryRegex
+	}
+	if p.Quiet != nil && !cmd.Flags().Changed("quiet") {
+		quiet = *p.Quiet
+	}
+	if p.LogFile != "" && !cmd.Flags().Changed("log-file") {
+		logFile = p.LogFile
+	}
+	if p.LogLevel != "" && !cmd.Flags().Changed("log-level") {
+		logLevel = p.LogLevel
+	}
+	if p.JSON != nil && !cmd.Flags().Changed("json") {
+		jsonOutput = *p.JSON
+	}
 }
 
 // joinCommandArgs properly joins command arguments, quoting those that contain spaces.
@@ -864,13 +1018,17 @@ func getJitterValue(cmd *cobra.Command) float64 {
 }
 
 
-// getEffectivePolicyName returns the policy name from flag or environment.
+// getEffectivePolicyName returns the policy name from flag, environment, or config profile.
 func getEffectivePolicyName(cmd *cobra.Command) string {
 	if cmd.Flags().Changed("policy") {
 		return policyName
 	}
 	if envPolicy := viper.GetString("policy"); envPolicy != "" {
 		return envPolicy
+	}
+	// Fall back to config profile's policy field
+	if loadedProfile.Policy != "" {
+		return loadedProfile.Policy
 	}
 	return policyName
 }
