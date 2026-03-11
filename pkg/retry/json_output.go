@@ -9,6 +9,7 @@ import (
 type JSONResult struct {
 	Command             string            `json:"command"`
 	Status              string            `json:"status"`
+	Policy              string            `json:"policy,omitempty"`
 	Attempts            int               `json:"attempts"`
 	FinalExitCode       int               `json:"final_exit_code"`
 	TotalDuration       string            `json:"total_duration"`

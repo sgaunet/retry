@@ -1245,3 +1245,86 @@ testcases:
     - result.systemout ShouldContainSubstring '"timeout"'
     - result.systemout ShouldContainSubstring '"conditions_evaluated"'
 
+# =============================================================================
+# POLICY PRESET TESTS (Issue #58)
+# =============================================================================
+
+- name: test-list-policies
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --list-policies
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "fast"
+    - result.systemout ShouldContainSubstring "standard"
+    - result.systemout ShouldContainSubstring "network"
+    - result.systemout ShouldContainSubstring "database"
+    - result.systemout ShouldContainSubstring "aggressive"
+    - result.systemout ShouldContainSubstring "cautious"
+    - result.systemout ShouldContainSubstring "test"
+    - result.systemout ShouldContainSubstring "infinite"
+
+- name: test-show-policy-standard
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --show-policy standard
+    assertions:
+    - result.code ShouldEqual 0
+    - 'result.systemout ShouldContainSubstring "Policy: standard"'
+    - result.systemout ShouldContainSubstring "exponential"
+    - 'result.systemout ShouldContainSubstring "Max Tries: 5"'
+
+- name: test-show-policy-nonexistent
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --show-policy nonexistent
+    assertions:
+    - result.code ShouldEqual 1
+
+- name: test-policy-fast-success
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --policy fast "echo ok"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "ok"
+
+- name: test-policy-override-max-tries
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --policy network --max-tries 2 "sh -c 'exit 1'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring "max_tries=2"
+
+- name: test-policy-env-var
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      RETRY_POLICY=test go run ../cmd "echo env-policy"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring "env-policy"
+
+- name: test-policy-json-output
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --policy fast --json "echo json-policy"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring '"policy":"fast"'
+    - result.systemout ShouldContainSubstring '"status":"success"'
+

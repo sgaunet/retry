@@ -44,6 +44,7 @@ var (
 	ErrInvalidLogLevel       = errors.New("log level must be one of: error, warn, info, debug")
 	ErrConflictingOutputModes = errors.New(
 		"cannot combine output modes (--json, --json-pretty, --summary-only, --quiet-retries)")
+	ErrUnknownPolicy = errors.New("unknown policy")
 )
 
 var (
@@ -91,6 +92,11 @@ var (
 	// JSON output flags.
 	jsonOutput bool
 	jsonPretty bool
+
+	// Policy flags.
+	policyName   string
+	listPolicies bool
+	showPolicy   string
 )
 
 var rootCmd = &cobra.Command{
@@ -167,10 +173,31 @@ if it contains spaces or special characters.`,
   retry --fail-if-contains "fatal error" "deployment"
   
   # Success based on regex match
-  retry --success-regex "HTTP/1.1 [23][0-9][0-9]" "curl -I https://api.com"`,
+  retry --success-regex "HTTP/1.1 [23][0-9][0-9]" "curl -I https://api.com"
+
+  # Policy Presets (Issue #58)
+  # Use a named policy for quick configuration
+  retry --policy fast "make test"
+
+  # Network-aware retries with jitter
+  retry --policy network "curl -f https://api.example.com"
+
+  # Override policy defaults with explicit flags
+  retry --policy network --max-tries 3 "curl -f https://api.example.com"
+
+  # List available policies
+  retry --list-policies
+
+  # Show details for a specific policy
+  retry --show-policy standard`,
 	Args: func(_ *cobra.Command, args []string) error {
 		// Check if command is provided as positional argument
 		if len(args) > 0 {
+			return nil
+		}
+
+		// Allow no positional args for info commands
+		if listPolicies || showPolicy != "" {
 			return nil
 		}
 
@@ -254,6 +281,12 @@ func setupOutputFlags() {
 	rootCmd.Flags().BoolVar(&jsonPretty, "json-pretty", false, "output results as pretty-printed JSON")
 }
 
+func setupPolicyFlags() {
+	rootCmd.Flags().StringVarP(&policyName, "policy", "P", "", "use a named retry policy preset")
+	rootCmd.Flags().BoolVar(&listPolicies, "list-policies", false, "list all available retry policies")
+	rootCmd.Flags().StringVar(&showPolicy, "show-policy", "", "show details for a specific policy")
+}
+
 func setupEnvironmentBindings() {
 	viper.SetEnvPrefix("RETRY")
 	viper.AutomaticEnv()
@@ -270,6 +303,7 @@ func bindFlagsToViper() {
 		"quiet-retries", "summary-only", "verbose-output",
 		"quiet", "log-file", "log-level",
 		"json", "json-pretty",
+		"policy",
 	}
 	
 	for _, flag := range flags {
@@ -285,6 +319,7 @@ func init() {
 	setupStopConditionFlags()
 	setupSuccessFailureFlags()
 	setupOutputFlags()
+	setupPolicyFlags()
 
 	setupEnvironmentBindings()
 	bindFlagsToViper()
@@ -317,10 +352,29 @@ func joinCommandArgs(args []string) string {
 }
 
 func runRetry(cmd *cobra.Command, args []string) error {
+	// Handle info commands first (no command required)
+	if listPolicies {
+		fmt.Print(retry.FormatPolicyTable())
+		return nil
+	}
+	if showPolicy != "" {
+		detail, err := retry.FormatPolicyDetail(showPolicy)
+		if err != nil {
+			return fmt.Errorf("%w: %s", ErrUnknownPolicy, showPolicy)
+		}
+		fmt.Print(detail)
+		return nil
+	}
+
 	// Get command from positional arguments
 	commandStr := joinCommandArgs(args)
 	if commandStr == "" {
 		return ErrCommandEmpty
+	}
+
+	// Apply policy defaults before validation
+	if err := applyPolicy(cmd); err != nil {
+		return err
 	}
 
 	// Validate flag combinations
@@ -674,7 +728,8 @@ func createAndRunRetry(
 	retryErr := r.RunWithLogger(rootContext, appLogger)
 
 	if jsonMode {
-		if jsonErr := outputJSON(cmd, r, collector, commandStr, retryErr, backoffType); jsonErr != nil {
+		effectivePolicy := getEffectivePolicyName(cmd)
+		if jsonErr := outputJSON(cmd, r, collector, commandStr, retryErr, backoffType, effectivePolicy); jsonErr != nil {
 			return fmt.Errorf("failed to output JSON: %w", jsonErr)
 		}
 	}
@@ -808,6 +863,67 @@ func getJitterValue(cmd *cobra.Command) float64 {
 	return jitterValue
 }
 
+
+// getEffectivePolicyName returns the policy name from flag or environment.
+func getEffectivePolicyName(cmd *cobra.Command) string {
+	if cmd.Flags().Changed("policy") {
+		return policyName
+	}
+	if envPolicy := viper.GetString("policy"); envPolicy != "" {
+		return envPolicy
+	}
+	return policyName
+}
+
+// applyPolicy applies a named policy's defaults to the global flag variables.
+// Explicit CLI flags take precedence over policy defaults.
+//
+//nolint:cyclop // Many fields to apply, but each is a simple conditional assignment
+func applyPolicy(cmd *cobra.Command) error {
+	name := getEffectivePolicyName(cmd)
+	if name == "" {
+		return nil
+	}
+
+	p, err := retry.GetPolicy(name)
+	if err != nil {
+		return fmt.Errorf("%w: %s", ErrUnknownPolicy, name)
+	}
+
+	if !cmd.Flags().Changed("max-tries") {
+		maxTries = p.MaxTries
+	}
+
+	if !cmd.Flags().Changed("backoff") {
+		backoff = p.Backoff
+	}
+
+	if !cmd.Flags().Changed("delay") && p.Delay > 0 {
+		delay = p.Delay.String()
+	}
+
+	if !cmd.Flags().Changed("base-delay") && p.BaseDelay > 0 {
+		baseDelay = p.BaseDelay.String()
+	}
+
+	if !cmd.Flags().Changed("max-delay") && p.MaxDelay > 0 {
+		maxDelay = p.MaxDelay.String()
+	}
+
+	if !cmd.Flags().Changed("multiplier") && p.Multiplier > 0 {
+		multiplier = p.Multiplier
+	}
+
+	if !cmd.Flags().Changed("increment") && p.Increment > 0 {
+		increment = p.Increment.String()
+	}
+
+	if !cmd.Flags().Changed("jitter") && p.Jitter > 0 {
+		jitter = p.Jitter
+	}
+
+	return nil
+}
 
 //nolint:ireturn // Factory function needs to return interface
 func buildStopConditions(cmd *cobra.Command, maxTries uint) (retry.ConditionRetryer, error) {
@@ -1206,8 +1322,9 @@ func outputJSON(
 	command string,
 	retryErr error,
 	backoffType string,
+	policyUsed string,
 ) error {
-	result := buildJSONResult(cmd, r, collector, command, retryErr, backoffType)
+	result := buildJSONResult(cmd, r, collector, command, retryErr, backoffType, policyUsed)
 
 	var data []byte
 	var err error
@@ -1232,10 +1349,12 @@ func buildJSONResult(
 	command string,
 	retryErr error,
 	backoffType string,
+	policyUsed string,
 ) retry.JSONResult {
 	return retry.JSONResult{
 		Command:             command,
 		Status:              determineStatus(retryErr),
+		Policy:              policyUsed,
 		Attempts:            r.GetTries(),
 		FinalExitCode:       r.GetLastExitCode(),
 		TotalDuration:       collector.TotalDuration().String(),
