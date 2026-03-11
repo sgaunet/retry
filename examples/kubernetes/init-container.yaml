@@ -1,0 +1,50 @@
+# Kubernetes Init Container example
+#
+# Uses retry in an init container to wait for a dependency service
+# to become available before starting the main application container.
+#
+# The retry image is lightweight and includes curl for HTTP checks.
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp
+  labels:
+    app: myapp
+spec:
+  initContainers:
+    # Wait for the API dependency to be ready
+    - name: wait-for-api
+      image: ghcr.io/sgaunet/retry:latest
+      command:
+        - /retry
+        - --max-tries=0
+        - --timeout=5m
+        - --backoff=exponential
+        - --base-delay=2s
+        - --max-delay=30s
+        - --success-contains=healthy
+        - --quiet
+        - "curl -sf http://api-service:8080/health"
+
+    # Wait for the database to accept connections
+    - name: wait-for-db
+      image: ghcr.io/sgaunet/retry:latest
+      command:
+        - /retry
+        - --max-tries=0
+        - --timeout=3m
+        - --backoff=exponential
+        - --base-delay=1s
+        - --max-delay=15s
+        - --quiet
+        - "pg_isready -h postgres-service -p 5432 -U myuser"
+
+  containers:
+    - name: myapp
+      image: myapp:latest
+      ports:
+        - containerPort: 8080
+      env:
+        - name: DATABASE_URL
+          value: postgres://myuser:mypassword@postgres-service:5432/mydb

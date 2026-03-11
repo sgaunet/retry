@@ -1,0 +1,32 @@
+# Example Dockerfile: Multi-stage build with retry for health checks
+#
+# This demonstrates how to include retry in your Docker image
+# for use in health checks and startup scripts.
+
+FROM golang:1.24-alpine AS builder
+WORKDIR /app
+COPY . .
+RUN CGO_ENABLED=0 go build -o myapp .
+
+# Copy retry binary from the official image
+FROM ghcr.io/sgaunet/retry:latest AS retry
+
+FROM alpine:3.21
+RUN apk add --no-cache curl
+
+# Copy application binary
+COPY --from=builder /app/myapp /usr/local/bin/myapp
+
+# Copy retry binary for health checks
+COPY --from=retry /retry /usr/local/bin/retry
+
+# Copy health check script
+COPY examples/docker/healthcheck.sh /usr/local/bin/healthcheck.sh
+RUN chmod +x /usr/local/bin/healthcheck.sh
+
+# Health check using retry with linear backoff
+HEALTHCHECK --interval=15s --timeout=30s --retries=1 \
+  CMD ["/usr/local/bin/healthcheck.sh"]
+
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/myapp"]

@@ -1,0 +1,38 @@
+# Kubernetes Job example
+#
+# Runs a batch job with retry logic for operations that may fail
+# due to transient issues (network, rate limits, etc.).
+#
+# retry handles the retry logic internally, so the Job's
+# backoffLimit can remain low.
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: data-sync
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: data-sync
+          image: ghcr.io/sgaunet/retry:latest
+          command:
+            - /retry
+            - --max-tries=5
+            - --backoff=exponential
+            - --base-delay=10s
+            - --max-delay=2m
+            - --jitter=0.2
+            - --timeout=30m
+            - --fail-if-contains=FATAL
+            - --log-level=info
+            - "curl -sf -X POST https://api.example.com/sync"
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "50m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"

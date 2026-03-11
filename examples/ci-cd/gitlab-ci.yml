@@ -1,0 +1,107 @@
+# GitLab CI pipeline example: Build and deploy with retry
+#
+# This pipeline demonstrates retry for each stage of a typical
+# build-test-deploy workflow.
+
+stages:
+  - build
+  - test
+  - deploy
+  - verify
+
+variables:
+  RETRY_IMAGE: ghcr.io/sgaunet/retry:latest
+
+# Build stage: retry on transient registry/network failures
+build:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    # Install retry
+    - apk add --no-cache curl
+    - |
+      curl -sL "https://github.com/sgaunet/retry/releases/latest/download/retry_linux_amd64.tar.gz" \
+        | tar xz retry
+      mv retry /usr/local/bin/
+
+    # Retry docker build (handles transient registry failures)
+    - |
+      retry --max-tries 3 \
+            --backoff exponential \
+            --base-delay 5s \
+            --max-delay 1m \
+            --retry-if-contains "net/http" \
+            "docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA ."
+
+    # Retry docker push
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - |
+      retry --max-tries 5 \
+            --backoff exponential \
+            --base-delay 2s \
+            --max-delay 30s \
+            "docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+
+# Test stage: handle flaky tests
+test:
+  stage: test
+  image: golang:1.24
+  script:
+    - go install github.com/sgaunet/retry/cmd@latest
+
+    # Retry flaky tests but fail fast on real assertion errors
+    - |
+      retry --max-tries 3 \
+            --delay 10s \
+            --retry-if-contains "connection timeout" \
+            --fail-if-contains "FAIL" \
+            "go test -race ./..."
+
+# Deploy to staging
+deploy_staging:
+  stage: deploy
+  image: bitnami/kubectl:latest
+  script:
+    - |
+      curl -sL "https://github.com/sgaunet/retry/releases/latest/download/retry_linux_amd64.tar.gz" \
+        | tar xz retry
+      mv retry /usr/local/bin/
+
+    # Deploy with retry
+    - |
+      retry --max-tries 5 \
+            --backoff exponential \
+            --base-delay 3s \
+            --max-delay 1m \
+            "kubectl apply -f k8s/staging/"
+
+    # Wait for rollout
+    - |
+      retry --max-tries 0 \
+            --timeout 5m \
+            --backoff fixed \
+            --delay 5s \
+            --success-contains "successfully rolled out" \
+            "kubectl rollout status deployment/myapp -n staging"
+
+# Post-deploy verification
+verify:
+  stage: verify
+  image: curlimages/curl:latest
+  script:
+    - |
+      curl -sL "https://github.com/sgaunet/retry/releases/latest/download/retry_linux_amd64.tar.gz" \
+        | tar xz retry
+      mv retry /usr/local/bin/
+
+    # Verify the deployed service is responding
+    - |
+      retry --max-tries 10 \
+            --backoff exponential \
+            --base-delay 5s \
+            --max-delay 30s \
+            --jitter 0.1 \
+            --success-regex "HTTP/[12].[01] [23][0-9][0-9]" \
+            "curl -sI https://staging.example.com/health"
