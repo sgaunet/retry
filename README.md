@@ -81,6 +81,88 @@ Demo:
 
 ![demo](doc/demo.gif)
 
+## Using as a Go Library
+
+In addition to the CLI tool, you can use `retry` as a Go library in your own applications.
+
+### Installation
+
+```bash
+go get github.com/sgaunet/retry
+```
+
+### Basic Usage
+
+```go
+import (
+    "context"
+    "time"
+
+    "github.com/sgaunet/retry/pkg/logger"
+    "github.com/sgaunet/retry/pkg/retry"
+)
+
+func main() {
+    // Create retry with max 5 attempts
+    r, _ := retry.NewRetry("your-command", retry.NewStopOnMaxTries(5))
+
+    // Add exponential backoff
+    r.SetBackoffStrategy(retry.NewExponentialBackoff(
+        time.Second,    // base delay
+        time.Minute,    // max delay
+        2.0,            // multiplier
+    ))
+
+    // Run with context and logger
+    appLogger := logger.NewLogger("info")
+    err := r.RunWithLogger(context.Background(), appLogger)
+    if err != nil {
+        // handle error
+    }
+}
+```
+
+### Composite Conditions
+
+Combine multiple stop conditions with AND/OR logic:
+
+```go
+// Stop after 10 tries OR after 5 minutes
+condition := retry.NewCompositeCondition(
+    retry.LogicOR,
+    retry.NewStopOnMaxTries(10),
+    retry.NewStopOnTimeout(5 * time.Minute),
+)
+r, _ := retry.NewRetry("curl -sf https://api.example.com/health", condition)
+```
+
+### Success Conditions
+
+Define custom success criteria beyond just exit code 0:
+
+```go
+r, _ := retry.NewRetry("curl https://api.example.com", retry.NewStopOnMaxTries(10))
+
+// Consider successful if output contains "healthy"
+successCond, _ := retry.NewSuccessContains("healthy")
+r.SetSuccessConditions([]retry.ConditionRetryer{successCond})
+```
+
+### Available Backoff Strategies
+
+- **Fixed**: Constant delay between retries
+- **Exponential**: Delay doubles (or multiplies) each attempt
+- **Linear**: Delay increases by a fixed increment
+- **Fibonacci**: Delay follows the Fibonacci sequence
+- **Jitter**: Wraps any strategy with randomness to avoid thundering herd
+- **Custom**: User-defined delay sequence
+
+### API Documentation
+
+Full API documentation is available at: https://pkg.go.dev/github.com/sgaunet/retry/pkg/retry
+
+See [examples/](examples/) for complete runnable examples.
+
 # Install
 
 ## From binary 

@@ -1,4 +1,71 @@
-// Package retry provides a simple way to retry a command execution based on a condition.
+// Package retry provides a flexible command retry mechanism with configurable
+// stop conditions, success conditions, and backoff strategies.
+//
+// # Basic Usage
+//
+// Create a retry instance with a command and a stop condition, then run it:
+//
+//	r, err := retry.NewRetry("curl https://api.example.com/health",
+//	    retry.NewStopOnMaxTries(5))
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	r.SetBackoffStrategy(retry.NewExponentialBackoff(
+//	    time.Second,    // base delay
+//	    time.Minute,    // max delay
+//	    2.0,            // multiplier
+//	))
+//	err = r.RunWithLogger(context.Background(), logger.NewLogger("info"))
+//
+// # Stop Conditions
+//
+// Stop conditions determine when to stop retrying:
+//
+//   - [NewStopOnMaxTries]: Stop after N attempts
+//   - [NewStopOnTimeout]: Stop after a duration
+//   - [NewStopOnMaxExecTime]: Stop based on maximum execution time
+//   - [NewStopOnExitCode]: Stop on specific exit codes
+//   - [NewStopOnOutputContains]: Stop when output matches a pattern
+//   - [NewStopAtTimeOfDay]: Stop at a specific time of day
+//
+// # Success Conditions
+//
+// Success conditions define what constitutes a successful execution
+// beyond just a zero exit code:
+//
+//   - [NewSuccessOnExitCode]: Success on specific exit codes
+//   - [NewSuccessContains]: Success when output contains a pattern
+//   - [NewSuccessRegex]: Success when output matches a regex
+//
+// # Retry Conditions
+//
+// Retry conditions control when to continue retrying:
+//
+//   - [NewRetryOnExitCode]: Only retry on specific exit codes
+//   - [NewRetryIfContains]: Retry when output contains a pattern
+//   - [NewRetryRegex]: Retry when output matches a regex
+//
+// # Backoff Strategies
+//
+// Backoff strategies control the delay between retries:
+//
+//   - [NewFixedBackoff]: Constant delay between retries
+//   - [NewExponentialBackoff]: Exponentially increasing delay
+//   - [NewLinearBackoff]: Linearly increasing delay
+//   - [NewFibonacciBackoff]: Fibonacci sequence based delay
+//   - [NewJitterBackoff]: Adds randomness to any backoff strategy
+//   - [NewCustomBackoff]: User-defined delay sequence
+//
+// # Composite Conditions
+//
+// Combine multiple conditions with AND/OR logic using [NewCompositeCondition]:
+//
+//	condition := retry.NewCompositeCondition(
+//	    retry.LogicOR,
+//	    retry.NewStopOnMaxTries(10),
+//	    retry.NewStopOnTimeout(5 * time.Minute),
+//	)
+//	r, _ := retry.NewRetry("my-command", condition)
 package retry
 
 import (
