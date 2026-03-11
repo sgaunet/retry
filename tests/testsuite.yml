@@ -1120,4 +1120,128 @@ testcases:
     - result.code ShouldEqual 1
     - result.systemout ShouldContainSubstring "error parsing regex"
 
+# =============================================================================
+# JSON OUTPUT TESTS (Issue #55)
+# =============================================================================
+
+- name: test-json-output-success
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --json "echo hello"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring '"status":"success"'
+    - result.systemout ShouldContainSubstring '"command":"echo hello"'
+    - result.systemout ShouldContainSubstring '"attempts":1'
+    - result.systemout ShouldContainSubstring '"final_exit_code":0'
+    - result.systemout ShouldContainSubstring '"execution_details"'
+    - result.systemout ShouldContainSubstring '"stop_condition":"command_succeeded"'
+    - result.systemout ShouldNotContainSubstring "level=INFO"
+    - result.systemout ShouldNotContainSubstring "level=WARN"
+
+- name: test-json-output-failure
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --json --max-tries 2 "sh -c 'exit 1'"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring '"status":"failure"'
+    - result.systemout ShouldContainSubstring '"attempts":2'
+    - result.systemout ShouldContainSubstring '"final_exit_code":1'
+    - result.systemout ShouldContainSubstring '"stop_condition":"max_tries_reached"'
+    - result.systemout ShouldNotContainSubstring "level=INFO"
+
+- name: test-json-suppresses-command-output
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --json "echo hello"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring '"status":"success"'
+    # Log output should be suppressed in JSON mode
+    - result.systemout ShouldNotContainSubstring "level=INFO"
+    - result.systemout ShouldNotContainSubstring "level=WARN"
+    - result.systemout ShouldNotContainSubstring "Attempting command"
+
+- name: test-json-pretty-output
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --json-pretty --max-tries 1 "echo pretty" | head -3
+    assertions:
+    - result.code ShouldEqual 0
+    # Pretty-printed JSON starts with { on first line, then indented fields
+    - result.systemout ShouldContainSubstring "{"
+    - result.systemout ShouldContainSubstring "success"
+    - result.systemout ShouldNotContainSubstring "level=INFO"
+
+- name: test-json-with-backoff
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --json --backoff exponential --base-delay 10ms --max-tries 2 "false"
+    assertions:
+    - result.code ShouldEqual 1
+    - result.systemout ShouldContainSubstring '"backoff_strategy":"exponential"'
+    - result.systemout ShouldContainSubstring '"status":"failure"'
+    - result.systemout ShouldContainSubstring '"attempts":2'
+
+- name: test-json-with-success-condition
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --json --success-on-exit "0,2" --max-tries 1 "sh -c 'exit 2'"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring '"success_condition_met":true'
+    - result.systemout ShouldContainSubstring '"status":"success"'
+
+- name: test-json-env-variable
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      RETRY_JSON=true go run ../cmd "echo env json"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring '"status":"success"'
+    - result.systemout ShouldContainSubstring '"command":"echo env json"'
+    - result.systemout ShouldNotContainSubstring "level=INFO"
+
+- name: test-json-with-log-file
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      rm -f json_test.log
+      go run ../cmd --json --log-file json_test.log "echo logged"
+      echo "---LOG_SEPARATOR---"
+      cat json_test.log
+    assertions:
+    - result.code ShouldEqual 0
+    # JSON output on stdout
+    - result.systemout ShouldContainSubstring '"status":"success"'
+    # Log file should contain log entries
+    - result.systemout ShouldContainSubstring "Attempting command"
+
+- name: test-json-conditions-evaluated
+  steps:
+  - type: exec
+    script: |
+      cd {{.venom.testsuite.workdir}}
+      go run ../cmd --json --max-tries 2 --timeout 10s "echo test"
+    assertions:
+    - result.code ShouldEqual 0
+    - result.systemout ShouldContainSubstring '"max_tries"'
+    - result.systemout ShouldContainSubstring '"timeout"'
+    - result.systemout ShouldContainSubstring '"conditions_evaluated"'
 

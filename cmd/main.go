@@ -3,8 +3,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"slices"
@@ -41,7 +43,7 @@ var (
 	ErrEmptyDelays           = errors.New("delays cannot be empty when using custom backoff")
 	ErrInvalidLogLevel       = errors.New("log level must be one of: error, warn, info, debug")
 	ErrConflictingOutputModes = errors.New(
-		"cannot combine output modes (--summary-only, --quiet-retries)")
+		"cannot combine output modes (--json, --json-pretty, --summary-only, --quiet-retries)")
 )
 
 var (
@@ -85,6 +87,10 @@ var (
 	quiet     bool
 	logFile   string
 	logLevel  string
+
+	// JSON output flags.
+	jsonOutput bool
+	jsonPretty bool
 )
 
 var rootCmd = &cobra.Command{
@@ -242,6 +248,10 @@ func setupOutputFlags() {
 	rootCmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "minimal output (only show final result)")
 	rootCmd.Flags().StringVarP(&logFile, "log-file", "f", "", "write logs to file")
 	rootCmd.Flags().StringVarP(&logLevel, "log-level", "l", "info", "set log level (error, warn, info, debug)")
+
+	// JSON output flags
+	rootCmd.Flags().BoolVar(&jsonOutput, "json", false, "output results as JSON")
+	rootCmd.Flags().BoolVar(&jsonPretty, "json-pretty", false, "output results as pretty-printed JSON")
 }
 
 func setupEnvironmentBindings() {
@@ -259,6 +269,7 @@ func bindFlagsToViper() {
 		"fail-if-contains", "success-regex", "retry-regex",
 		"quiet-retries", "summary-only", "verbose-output",
 		"quiet", "log-file", "log-level",
+		"json", "json-pretty",
 	}
 	
 	for _, flag := range flags {
@@ -372,6 +383,17 @@ func validateLogLevel(cmd *cobra.Command) error {
 
 // validateOutputModesConflicts checks for conflicting output mode flags.
 func validateOutputModesConflicts(cmd *cobra.Command) error {
+	jsonMode := isJSONModeEnabled(cmd)
+
+	if jsonMode {
+		if isOutputModeEnabled(cmd, "summary-only", summaryOnly) {
+			return ErrConflictingOutputModes
+		}
+		if isOutputModeEnabled(cmd, "quiet-retries", quietRetries) {
+			return ErrConflictingOutputModes
+		}
+	}
+
 	conflictCount := 0
 
 	if isOutputModeEnabled(cmd, "summary-only", summaryOnly) {
@@ -391,6 +413,20 @@ func validateOutputModesConflicts(cmd *cobra.Command) error {
 // isOutputModeEnabled checks if a specific output mode flag is enabled.
 func isOutputModeEnabled(cmd *cobra.Command, flagName string, flagValue bool) bool {
 	return flagValue || (!cmd.Flags().Changed(flagName) && viper.GetBool(flagName))
+}
+
+// isJSONModeEnabled checks if JSON output mode is enabled via flags or environment.
+func isJSONModeEnabled(cmd *cobra.Command) bool {
+	if jsonOutput || jsonPretty {
+		return true
+	}
+	if !cmd.Flags().Changed("json") && viper.GetBool("json") {
+		return true
+	}
+	if !cmd.Flags().Changed("json-pretty") && viper.GetBool("json-pretty") {
+		return true
+	}
+	return false
 }
 
 
@@ -545,10 +581,16 @@ func isQuietModeEnabled(cmd *cobra.Command) bool {
 //nolint:ireturn // Returning interface is intentional for dependency injection
 func initializeAppLogger(cmd *cobra.Command) (logger.Logger, error) {
 	quietMode := isQuietModeEnabled(cmd)
+	jsonMode := isJSONModeEnabled(cmd)
 	finalLogFile := getEffectiveLogFile(cmd)
 	finalLogLevel := getEffectiveLogLevel(cmd)
 
-	// Case 1: Quiet mode without file logging - use NoLogger (suppresses all output)
+	// Case 1: JSON mode without file logging - use NoLogger (suppress log output to stdout)
+	if jsonMode && finalLogFile == "" {
+		return logger.NoLogger(), nil
+	}
+
+	// Case 2: Quiet mode without file logging - use NoLogger (suppresses all output)
 	if quietMode && finalLogFile == "" {
 		return logger.NoLogger(), nil
 	}
@@ -566,41 +608,50 @@ func initializeAppLogger(cmd *cobra.Command) (logger.Logger, error) {
 	return logger.NewLogger(finalLogLevel), nil
 }
 
+func createRetryInstance(
+	commandStr string,
+	finalMaxTries uint,
+	cmd *cobra.Command,
+	appLogger logger.Logger,
+) (*retry.Retry, error) {
+	appLogger.Debug("building stop conditions")
+	condition, err := buildStopConditions(cmd, finalMaxTries)
+	if err != nil {
+		appLogger.Error("failed to build stop conditions", "error", err.Error())
+		return nil, fmt.Errorf("failed to build stop conditions: %w", err)
+	}
+
+	result := separateConditions(condition)
+	appLogger.Debug("conditions separated",
+		"stop_conditions", result.stopCondition != nil,
+		"success_conditions_count", len(result.successConditions))
+
+	appLogger.Debug("creating retry instance", "command", commandStr)
+	r, err := retry.NewRetry(commandStr, result.stopCondition)
+	if err != nil {
+		appLogger.Error("failed to create retry instance", "error", err.Error())
+		return nil, fmt.Errorf("failed to create retry instance: %w", err)
+	}
+
+	if len(result.successConditions) > 0 {
+		appLogger.Debug("setting success conditions", "count", len(result.successConditions))
+		r.SetSuccessConditions(result.successConditions)
+	}
+
+	return r, nil
+}
+
 func createAndRunRetry(
 	commandStr string,
 	finalMaxTries uint,
 	cmd *cobra.Command,
 	appLogger logger.Logger,
 ) error {
-	// Build stop conditions
-	appLogger.Debug("building stop conditions")
-	condition, err := buildStopConditions(cmd, finalMaxTries)
+	r, err := createRetryInstance(commandStr, finalMaxTries, cmd, appLogger)
 	if err != nil {
-		appLogger.Error("failed to build stop conditions", "error", err.Error())
-		return fmt.Errorf("failed to build stop conditions: %w", err)
+		return err
 	}
 
-	// Separate success conditions from stop conditions
-	result := separateConditions(condition)
-	appLogger.Debug("conditions separated",
-		"stop_conditions", result.stopCondition != nil,
-		"success_conditions_count", len(result.successConditions))
-
-	// Create retry instance
-	appLogger.Debug("creating retry instance", "command", commandStr)
-	r, err := retry.NewRetry(commandStr, result.stopCondition)
-	if err != nil {
-		appLogger.Error("failed to create retry instance", "error", err.Error())
-		return fmt.Errorf("failed to create retry instance: %w", err)
-	}
-
-	// Set success conditions separately
-	if len(result.successConditions) > 0 {
-		appLogger.Debug("setting success conditions", "count", len(result.successConditions))
-		r.SetSuccessConditions(result.successConditions)
-	}
-
-	// Build strategy
 	backoffType := getBackoffType(cmd)
 	appLogger.Debug("building backoff strategy", "type", backoffType)
 	strategy, err := buildStrategy(cmd)
@@ -608,15 +659,29 @@ func createAndRunRetry(
 		appLogger.Error("failed to build backoff strategy", "error", err.Error(), "type", backoffType)
 		return err
 	}
-	appLogger.Debug("backoff strategy configured", "type", backoffType)
-
-	// Set backoff strategy and run with logging
 	r.SetBackoffStrategy(strategy)
+
+	// Set up JSON mode if enabled
+	jsonMode := isJSONModeEnabled(cmd)
+	var collector *retry.AttemptCollector
+	if jsonMode {
+		collector = retry.NewAttemptCollector()
+		r.SetAttemptCollector(collector)
+		r.SetOutputWriters(io.Discard, io.Discard)
+	}
+
 	appLogger.Debug("starting retry execution", "max-tries", finalMaxTries)
-	err = r.RunWithLogger(rootContext, appLogger)
-	if err != nil {
-		appLogger.Debug("retry execution completed with error", "error", err.Error())
-		return fmt.Errorf("retry failed: %w", err)
+	retryErr := r.RunWithLogger(rootContext, appLogger)
+
+	if jsonMode {
+		if jsonErr := outputJSON(cmd, r, collector, commandStr, retryErr, backoffType); jsonErr != nil {
+			return fmt.Errorf("failed to output JSON: %w", jsonErr)
+		}
+	}
+
+	if retryErr != nil {
+		appLogger.Debug("retry execution completed with error", "error", retryErr.Error())
+		return fmt.Errorf("retry failed: %w", retryErr)
 	}
 
 	appLogger.Debug("retry execution completed successfully")
@@ -1133,58 +1198,190 @@ func isSuccessCondition(condition retry.ConditionRetryer) bool {
 	}
 }
 
+// outputJSON marshals the JSON result and writes it to stdout.
+func outputJSON(
+	cmd *cobra.Command,
+	r *retry.Retry,
+	collector *retry.AttemptCollector,
+	command string,
+	retryErr error,
+	backoffType string,
+) error {
+	result := buildJSONResult(cmd, r, collector, command, retryErr, backoffType)
+
+	var data []byte
+	var err error
+	if jsonPretty || (!cmd.Flags().Changed("json-pretty") && viper.GetBool("json-pretty")) {
+		data, err = json.MarshalIndent(result, "", "  ")
+	} else {
+		data, err = json.Marshal(result)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+
+	fmt.Println(string(data))
+	return nil
+}
+
+// buildJSONResult assembles the JSON result from the retry instance and collector.
+func buildJSONResult(
+	cmd *cobra.Command,
+	r *retry.Retry,
+	collector *retry.AttemptCollector,
+	command string,
+	retryErr error,
+	backoffType string,
+) retry.JSONResult {
+	return retry.JSONResult{
+		Command:             command,
+		Status:              determineStatus(retryErr),
+		Attempts:            r.GetTries(),
+		FinalExitCode:       r.GetLastExitCode(),
+		TotalDuration:       collector.TotalDuration().String(),
+		StopCondition:       determineStopConditionName(retryErr),
+		BackoffStrategy:     backoffType,
+		ExecutionDetails:    collector.GetAttempts(),
+		SuccessConditionMet: r.IsSuccessConditionMet(),
+		ConditionsEvaluated: buildConditionsEvaluated(cmd),
+	}
+}
+
+// determineStatus returns the JSON status string based on the error.
+func determineStatus(err error) string {
+	if err == nil {
+		return "success"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "interrupted"
+	}
+	return "failure"
+}
+
+// determineStopConditionName returns a human-readable stop condition name.
+func determineStopConditionName(err error) string {
+	if err == nil {
+		return "command_succeeded"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "interrupted"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if errors.Is(err, retry.ErrMaxTriesReached) {
+		return "max_tries_reached"
+	}
+	return "command_failed"
+}
+
+// conditionFlag maps a flag name and its value to a JSON key.
+type conditionFlag struct {
+	flagName string
+	flagVal  string
+	jsonKey  string
+}
+
+// buildConditionsEvaluated builds a map of active condition configurations.
+func buildConditionsEvaluated(cmd *cobra.Command) map[string]any {
+	conditions := make(map[string]any)
+
+	finalMaxTries := parseMaxTries(cmd)
+	if finalMaxTries > 0 {
+		conditions["max_tries"] = finalMaxTries
+	}
+
+	flags := []conditionFlag{
+		{"timeout", timeout, "timeout"},
+		{"stop-on-exit", stopOnExit, "stop_on_exit"},
+		{"stop-when-contains", stopWhenContains, "stop_when_contains"},
+		{"stop-when-not-contains", stopWhenNotContains, "stop_when_not_contains"},
+		{"stop-at", stopAt, "stop_at"},
+		{"success-on-exit", successOnExit, "success_on_exit"},
+		{"retry-on-exit", retryOnExit, "retry_on_exit"},
+		{"retry-if-contains", retryIfContains, "retry_if_contains"},
+		{"success-contains", successContains, "success_contains"},
+		{"fail-if-contains", failIfContains, "fail_if_contains"},
+		{"success-regex", successRegex, "success_regex"},
+		{"retry-regex", retryRegex, "retry_regex"},
+	}
+
+	for _, f := range flags {
+		if v := getValueOrEnv(cmd, f.flagName, f.flagVal); v != "" {
+			conditions[f.jsonKey] = v
+		}
+	}
+
+	return conditions
+}
+
+// handleSignalError handles errors caused by signal interruption.
+func handleSignalError(receivedSignal os.Signal) {
+	jsonMode := jsonOutput || jsonPretty
+	if !jsonMode {
+		switch receivedSignal {
+		case syscall.SIGINT:
+			fmt.Fprintln(os.Stderr, "Operation cancelled by user")
+		case syscall.SIGTERM:
+			fmt.Fprintln(os.Stderr, "Operation terminated")
+		default:
+			fmt.Fprintln(os.Stderr, "Operation cancelled by signal")
+		}
+	}
+	switch receivedSignal {
+	case syscall.SIGINT:
+		os.Exit(exitCodeSIGINT) //nolint:gocritic // Intentional immediate exit for signal handling
+	case syscall.SIGTERM:
+		os.Exit(exitCodeSIGTERM) //nolint:gocritic // Intentional immediate exit for signal handling
+	default:
+		os.Exit(1) //nolint:gocritic // Intentional immediate exit for signal handling
+	}
+}
+
+// handleExecutionError handles non-signal execution errors.
+func handleExecutionError(err error) {
+	jsonMode := jsonOutput || jsonPretty
+	if errors.Is(err, ErrCommandRequired) || errors.Is(err, ErrCommandEmpty) {
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, "")
+		_ = rootCmd.Usage()
+	} else if !jsonMode {
+		fmt.Fprintln(os.Stderr, err)
+	}
+	os.Exit(1)
+}
+
 func main() {
 	// Create a root context that can be cancelled on signal
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	
+
 	// Variable to track which signal was received for proper exit code
 	var receivedSignal os.Signal
-	
+
 	// Start signal handler in a goroutine
 	go func() {
 		sig := <-sigChan
 		receivedSignal = sig
-		fmt.Fprintf(os.Stderr, "\nReceived signal %v, shutting down gracefully...\n", sig)
+		if !jsonOutput && !jsonPretty {
+			fmt.Fprintf(os.Stderr, "\nReceived signal %v, shutting down gracefully...\n", sig)
+		}
 		cancel()
 	}()
-	
+
 	// Store context in a global variable so it can be accessed by command handlers
 	// Note: This is needed for signal handling coordination across the application
 	rootContext = ctx //nolint:fatcontext // Global context needed for signal handling
-	
+
 	err := rootCmd.Execute()
 	if err != nil {
-		// Check if the error is due to context cancellation (signal received)
-		// Only treat as signal if we actually received a signal
 		if errors.Is(err, context.Canceled) && receivedSignal != nil {
-			// Return appropriate exit code based on signal type
-			// Note: exitAfterDefer is intentional - we want immediate exit on signals
-			switch receivedSignal {
-			case syscall.SIGINT:
-				fmt.Fprintln(os.Stderr, "Operation cancelled by user")
-				os.Exit(exitCodeSIGINT) //nolint:gocritic // Intentional immediate exit for signal handling
-			case syscall.SIGTERM:
-				fmt.Fprintln(os.Stderr, "Operation terminated")
-				os.Exit(exitCodeSIGTERM) //nolint:gocritic // Intentional immediate exit for signal handling
-			default:
-				fmt.Fprintln(os.Stderr, "Operation cancelled by signal")
-				os.Exit(1) //nolint:gocritic // Intentional immediate exit for signal handling
-			}
+			handleSignalError(receivedSignal)
 		}
-		
-		// Show usage for command syntax errors, but not for retry failures
-		if errors.Is(err, ErrCommandRequired) || errors.Is(err, ErrCommandEmpty) {
-			fmt.Fprintln(os.Stderr, err)
-			fmt.Fprintln(os.Stderr, "")
-			_ = rootCmd.Usage()
-		} else {
-			fmt.Fprintln(os.Stderr, err)
-		}
-		os.Exit(1)
+		handleExecutionError(err)
 	}
 }
