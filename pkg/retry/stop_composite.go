@@ -31,6 +31,7 @@ func NewCompositeCondition(logic LogicOperator, conditions ...ConditionRetryer) 
 // with a timeout context gets cancelled. This avoids goroutine leaks.
 func createMergedContext(conditions []ConditionRetryer) (context.Context, context.CancelFunc) {
 	// Start with a cancellable background context
+	//nolint:gosec // G118: cancel is returned to caller
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Find timeout-based conditions (those that actually use cancellable contexts)
