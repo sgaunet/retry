@@ -111,6 +111,9 @@ type Retry struct {
 	backoff           BackoffStrategy
 	lastExitCode      int
 	successConditions []ConditionRetryer
+	collector         *AttemptCollector
+	stdoutWriter      io.Writer
+	stderrWriter      io.Writer
 }
 
 // ConditionRetryer is an interface that defines the methods required for a retry condition.
@@ -124,8 +127,10 @@ type ConditionRetryer interface {
 // NewRetry creates a new retry instance with the given command and condition.
 func NewRetry(cmd string, condition ConditionRetryer) (*Retry, error) {
 	r := &Retry{
-		cmd:       cmd,
-		condition: condition,
+		cmd:          cmd,
+		condition:    condition,
+		stdoutWriter: os.Stdout,
+		stderrWriter: os.Stderr,
 	}
 	if r.condition == nil {
 		return nil, ErrConditionNil
@@ -146,6 +151,32 @@ func (r *Retry) SetSuccessConditions(conditions []ConditionRetryer) {
 // GetSuccessConditions returns the success conditions for debugging.
 func (r *Retry) GetSuccessConditions() []ConditionRetryer {
 	return r.successConditions
+}
+
+// SetAttemptCollector sets the collector used to accumulate per-attempt data.
+func (r *Retry) SetAttemptCollector(c *AttemptCollector) {
+	r.collector = c
+}
+
+// SetOutputWriters sets the writers for command stdout and stderr output.
+func (r *Retry) SetOutputWriters(stdout, stderr io.Writer) {
+	r.stdoutWriter = stdout
+	r.stderrWriter = stderr
+}
+
+// GetLastExitCode returns the exit code from the last command execution.
+func (r *Retry) GetLastExitCode() int {
+	return r.lastExitCode
+}
+
+// IsSuccessConditionMet returns whether any success condition has been met.
+func (r *Retry) IsSuccessConditionMet() bool {
+	return r.isSuccessConditionMet()
+}
+
+// GetTries returns the number of attempts executed.
+func (r *Retry) GetTries() int {
+	return r.tries
 }
 
 // Run executes the command with retries based on the condition.
@@ -411,9 +442,13 @@ func (r *Retry) executeSingleTryWithLogger(ctx context.Context, appLogger logger
 	}
 
 	startTime := time.Now()
-	rc, stdout, stderr, err := execCommandWithOutputAndLogger(cmdCtx, r.cmd, appLogger)
+	rc, stdout, stderr, err := execCommandWithOutputAndLogger(cmdCtx, r.cmd, appLogger, r.stdoutWriter, r.stderrWriter)
 	duration := time.Since(startTime)
 	r.lastExitCode = rc
+
+	if r.collector != nil {
+		r.collector.RecordAttempt(r.tries, rc, duration, startTime)
+	}
 
 	if appLogger != nil {
 		appLogger.Debug("Command completed", "attempt", r.tries, "exit_code", rc, "duration", duration, "error", err != nil)
@@ -512,7 +547,7 @@ func checkSignalTermination(c *exec.Cmd, err error) (int, error) {
 }
 
 func execCommandWithOutputAndLogger(
-	ctx context.Context, cmd string, appLogger logger.Logger,
+	ctx context.Context, cmd string, appLogger logger.Logger, outW, errW io.Writer,
 ) (int, string, string, error) {
 	splitCmd, err := parseCommand(cmd)
 	if err != nil {
@@ -533,11 +568,11 @@ func execCommandWithOutputAndLogger(
 		Setpgid: true,
 	}
 
-	return executeCommandWithPipes(c)
+	return executeCommandWithPipes(c, outW, errW)
 }
 
 // executeCommandWithPipes handles command execution with pipes and output processing.
-func executeCommandWithPipes(c *exec.Cmd) (int, string, string, error) {
+func executeCommandWithPipes(c *exec.Cmd, outW, errW io.Writer) (int, string, string, error) {
 	stdout, stderr, err := setupCommandPipes(c)
 	if err != nil {
 		return -1, "", "", err
@@ -548,11 +583,13 @@ func executeCommandWithPipes(c *exec.Cmd) (int, string, string, error) {
 		return getExitCode(err), "", "", fmt.Errorf("command failed: %w", err)
 	}
 
-	return waitForCommandCompletion(c, stdout, stderr)
+	return waitForCommandCompletion(c, stdout, stderr, outW, errW)
 }
 
 // waitForCommandCompletion waits for command to finish and processes output.
-func waitForCommandCompletion(c *exec.Cmd, stdout, stderr io.ReadCloser) (int, string, string, error) {
+//
+//nolint:lll // Function signature requires multiple parameters for output redirection
+func waitForCommandCompletion(c *exec.Cmd, stdout, stderr io.ReadCloser, outW, errW io.Writer) (int, string, string, error) {
 	var wg sync.WaitGroup
 	var stdoutBuf, stderrBuf strings.Builder
 
@@ -560,12 +597,12 @@ func waitForCommandCompletion(c *exec.Cmd, stdout, stderr io.ReadCloser) (int, s
 
 	go func() {
 		defer wg.Done()
-		_, _ = io.Copy(io.MultiWriter(os.Stdout, &stdoutBuf), stdout)
+		_, _ = io.Copy(io.MultiWriter(outW, &stdoutBuf), stdout)
 	}()
 
 	go func() {
 		defer wg.Done()
-		_, _ = io.Copy(io.MultiWriter(os.Stderr, &stderrBuf), stderr)
+		_, _ = io.Copy(io.MultiWriter(errW, &stderrBuf), stderr)
 	}()
 	
 	// Wait for command to complete
