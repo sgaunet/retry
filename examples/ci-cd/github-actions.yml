@@ -1,0 +1,79 @@
+# GitHub Actions workflow example: Deploy with retry
+#
+# This workflow demonstrates using retry for deployment operations
+# that may fail due to transient infrastructure issues.
+
+name: Deploy with Retry
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install retry
+        run: |
+          curl -sL "https://github.com/sgaunet/retry/releases/latest/download/retry_linux_amd64.tar.gz" \
+            | tar xz retry
+          sudo mv retry /usr/local/bin/
+
+      # Example 1: Deploy with exponential backoff
+      # Strategy: Start with 5s delay, double each time, cap at 2 minutes
+      # This handles temporary API rate limits and infrastructure hiccups
+      - name: Deploy application
+        run: |
+          retry --backoff exponential \
+                --base-delay 5s \
+                --max-delay 2m \
+                --max-tries 5 \
+                "kubectl apply -f deployment.yaml"
+
+      # Example 2: Wait for deployment to be ready
+      # Strategy: Check every few seconds with linear backoff, timeout after 5 minutes
+      - name: Wait for deployment rollout
+        run: |
+          retry --max-tries 0 \
+                --timeout 5m \
+                --backoff linear \
+                --base-delay 3s \
+                --increment 1s \
+                --max-delay 15s \
+                --success-contains "successfully rolled out" \
+                "kubectl rollout status deployment/myapp"
+
+      # Example 3: Verify health endpoint after deploy
+      # Strategy: Exponential backoff with jitter to avoid thundering herd
+      - name: Verify health endpoint
+        run: |
+          retry --backoff exponential \
+                --base-delay 2s \
+                --max-delay 30s \
+                --jitter 0.2 \
+                --max-tries 10 \
+                --success-contains "healthy" \
+                "curl -sf https://myapp.example.com/health"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install retry
+        run: |
+          curl -sL "https://github.com/sgaunet/retry/releases/latest/download/retry_linux_amd64.tar.gz" \
+            | tar xz retry
+          sudo mv retry /usr/local/bin/
+
+      # Example 4: Retry flaky integration tests
+      # Strategy: Fixed delay, only retry on specific transient errors
+      - name: Run integration tests
+        run: |
+          retry --max-tries 3 \
+                --delay 5s \
+                --retry-if-contains "connection refused" \
+                --fail-if-contains "assertion failed" \
+                "make integration-test"

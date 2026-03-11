@@ -1,0 +1,58 @@
+# Docker Compose example: Service dependency handling with retry
+#
+# This demonstrates using retry to wait for dependent services
+# before starting the main application.
+
+services:
+  # Database service
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: mydb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U myuser"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis cache
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Wait for all dependencies before running migrations
+  migrate:
+    image: ghcr.io/sgaunet/retry:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/retry"]
+    command:
+      - --max-tries=10
+      - --backoff=exponential
+      - --base-delay=2s
+      - --max-delay=30s
+      - --success-on-exit=0
+      - "pg_isready -h postgres -p 5432 -U myuser"
+
+  # Application with retry-based health check
+  app:
+    build:
+      context: .
+      dockerfile: examples/docker/Dockerfile.example
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://myuser:mypassword@postgres:5432/mydb
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "8080:8080"

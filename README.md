@@ -163,6 +163,18 @@ Full API documentation is available at: https://pkg.go.dev/github.com/sgaunet/re
 
 See [examples/](examples/) for complete runnable examples.
 
+## Real-World Examples
+
+For comprehensive CLI usage examples, see the [examples/](examples/) directory:
+
+- **CI/CD Integration**: [GitHub Actions](examples/ci-cd/github-actions.yml), [GitLab CI](examples/ci-cd/gitlab-ci.yml)
+- **Docker & Containers**: [Health checks](examples/docker/healthcheck.sh), [Dockerfile](examples/docker/Dockerfile.example), [Compose](examples/docker/docker-compose.yml)
+- **Databases**: [Migrations](examples/databases/migration-retry.sh), [Connection waiting](examples/databases/connection-wait.sh)
+- **Networking**: [API health checks](examples/networking/api-endpoint-check.sh), [Downloads](examples/networking/download-with-retry.sh)
+- **Kubernetes**: [Init containers](examples/kubernetes/init-container.yaml), [Jobs](examples/kubernetes/job-with-retry.yaml)
+- **Testing**: [Flaky tests](examples/testing/flaky-tests.sh), [E2E tests](examples/testing/e2e-with-retry.sh)
+- **Services**: [Startup waiting](examples/services/service-startup-wait.sh), [Dependencies](examples/services/dependency-check.sh)
+
 # Install
 
 ## From binary 
