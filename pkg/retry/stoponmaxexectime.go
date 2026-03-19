@@ -37,7 +37,10 @@ func (s *StopOnMaxExecutionTime) StartTry() {
 	s.tries++
 }
 
-// EndTry cancels the context, stopping the retry process.
-func (s *StopOnMaxExecutionTime) EndTry() {
+// EndTry is a no-op. The timeout context should continue across tries.
+func (s *StopOnMaxExecutionTime) EndTry() {}
+
+// Cancel cancels the timeout context for explicit cleanup.
+func (s *StopOnMaxExecutionTime) Cancel() {
 	s.cancel()
 }

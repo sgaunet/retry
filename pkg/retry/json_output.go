@@ -65,5 +65,7 @@ func (c *AttemptCollector) GetAttempts() []AttemptDetail {
 
 // TotalDuration returns the total duration since the collector was created.
 func (c *AttemptCollector) TotalDuration() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return time.Since(c.start)
 }
