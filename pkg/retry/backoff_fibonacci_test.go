@@ -119,6 +119,40 @@ func TestFibonacciBackoff_Sequence(t *testing.T) {
 	}
 }
 
+// TestFibonacciBackoff_HighAttemptNoOverflow verifies Bug 5:
+// Attempt numbers beyond the int64 Fibonacci overflow boundary (>93) must not
+// produce negative delay values; they must be capped at MaxDelay.
+func TestFibonacciBackoff_HighAttemptNoOverflow(t *testing.T) {
+	baseDelay := time.Second
+	maxDelay := 10 * time.Minute
+
+	fb := NewFibonacciBackoff(baseDelay, maxDelay)
+
+	overflowAttempts := []int{93, 94, 100, 200, 1000}
+	for _, attempt := range overflowAttempts {
+		d := fb.NextDelay(attempt)
+		if d < 0 {
+			t.Errorf("attempt %d: NextDelay returned negative duration %v", attempt, d)
+		}
+		if maxDelay > 0 && d > maxDelay {
+			t.Errorf("attempt %d: NextDelay %v exceeds MaxDelay %v", attempt, d, maxDelay)
+		}
+	}
+}
+
+// TestFibonacciBackoff_HighAttemptNoMaxDelay verifies that without a MaxDelay cap,
+// high attempt numbers still don't return negative values.
+func TestFibonacciBackoff_HighAttemptNoMaxDelay(t *testing.T) {
+	fb := NewFibonacciBackoff(time.Millisecond, 0) // no cap
+
+	for _, attempt := range []int{93, 94, 100} {
+		d := fb.NextDelay(attempt)
+		if d < 0 {
+			t.Errorf("attempt %d: NextDelay returned negative duration %v without MaxDelay", attempt, d)
+		}
+	}
+}
+
 func TestFibonacciBackoff_SequenceConsistency(t *testing.T) {
 	// Test that calling NextDelay multiple times with the same attempt
 	// returns consistent results (i.e., the internal sequence is properly maintained)

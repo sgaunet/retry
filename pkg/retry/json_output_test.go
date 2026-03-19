@@ -2,6 +2,7 @@ package retry
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 )
@@ -148,6 +149,45 @@ func TestJSONResult_MarshalIndent(t *testing.T) {
 	if parsed.Status != "failure" {
 		t.Errorf("expected status 'failure', got '%s'", parsed.Status)
 	}
+}
+
+// TestAttemptCollector_TotalDurationConcurrent verifies Bug 7:
+// TotalDuration must be safe to call concurrently with RecordAttempt.
+// Run with: go test -race ./pkg/retry/...
+func TestAttemptCollector_TotalDurationConcurrent(t *testing.T) {
+	c := NewAttemptCollector()
+
+	const workers = 10
+	const recordsPerWorker = 50
+
+	var wg sync.WaitGroup
+
+	// Spawn goroutines that call RecordAttempt concurrently.
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < recordsPerWorker; j++ {
+				c.RecordAttempt(id*recordsPerWorker+j, j%3, time.Millisecond, time.Now())
+			}
+		}(i)
+	}
+
+	// Spawn goroutines that call TotalDuration concurrently with RecordAttempt.
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < recordsPerWorker; j++ {
+				d := c.TotalDuration()
+				if d < 0 {
+					t.Errorf("TotalDuration returned negative value: %v", d)
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
 }
 
 func TestAttemptDetail_TimestampFormat(t *testing.T) {

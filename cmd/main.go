@@ -1153,8 +1153,10 @@ func collectConditions(cmd *cobra.Command, maxTries uint) ([]retry.ConditionRetr
 //nolint:ireturn // Factory function needs to return interface
 func addTimeoutCondition(cmd *cobra.Command) (retry.ConditionRetryer, error) {
 	timeoutValue := timeout
-	if timeout != "" && !cmd.Flags().Changed("timeout") {
-		timeoutValue = viper.GetString("timeout")
+	if !cmd.Flags().Changed("timeout") {
+		if envTimeout := viper.GetString("timeout"); envTimeout != "" {
+			timeoutValue = envTimeout
+		}
 	}
 	if timeoutValue == "" {
 		return nil, nil //nolint:nilnil // Valid for optional condition creation
@@ -1170,8 +1172,10 @@ func addTimeoutCondition(cmd *cobra.Command) (retry.ConditionRetryer, error) {
 //nolint:ireturn // Factory function needs to return interface
 func addExitCodeCondition(cmd *cobra.Command) (retry.ConditionRetryer, error) {
 	exitCodes := stopOnExit
-	if stopOnExit != "" && !cmd.Flags().Changed("stop-on-exit") {
-		exitCodes = viper.GetString("stop-on-exit")
+	if !cmd.Flags().Changed("stop-on-exit") {
+		if envStopOnExit := viper.GetString("stop-on-exit"); envStopOnExit != "" {
+			exitCodes = envStopOnExit
+		}
 	}
 	if exitCodes == "" {
 		return nil, nil //nolint:nilnil // Valid for optional condition creation
@@ -1189,8 +1193,10 @@ func addOutputConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) {
 	
 	// Add output contains condition
 	containsPattern := stopWhenContains
-	if stopWhenContains != "" && !cmd.Flags().Changed("stop-when-contains") {
-		containsPattern = viper.GetString("stop-when-contains")
+	if !cmd.Flags().Changed("stop-when-contains") {
+		if envContains := viper.GetString("stop-when-contains"); envContains != "" {
+			containsPattern = envContains
+		}
 	}
 	if containsPattern != "" {
 		condition, err := retry.NewStopOnOutputContains(containsPattern)
@@ -1202,8 +1208,10 @@ func addOutputConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) {
 	
 	// Add output not contains condition
 	notContainsPattern := stopWhenNotContains
-	if stopWhenNotContains != "" && !cmd.Flags().Changed("stop-when-not-contains") {
-		notContainsPattern = viper.GetString("stop-when-not-contains")
+	if !cmd.Flags().Changed("stop-when-not-contains") {
+		if envNotContains := viper.GetString("stop-when-not-contains"); envNotContains != "" {
+			notContainsPattern = envNotContains
+		}
 	}
 	if notContainsPattern != "" {
 		condition, err := retry.NewStopOnOutputNotContains(notContainsPattern)
@@ -1219,8 +1227,10 @@ func addOutputConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) {
 //nolint:ireturn // Factory function needs to return interface
 func addTimeOfDayCondition(cmd *cobra.Command) (retry.ConditionRetryer, error) {
 	timeOfDay := stopAt
-	if stopAt != "" && !cmd.Flags().Changed("stop-at") {
-		timeOfDay = viper.GetString("stop-at")
+	if !cmd.Flags().Changed("stop-at") {
+		if envStopAt := viper.GetString("stop-at"); envStopAt != "" {
+			timeOfDay = envStopAt
+		}
 	}
 	if timeOfDay == "" {
 		return nil, nil //nolint:nilnil // Valid for optional condition creation
@@ -1418,9 +1428,9 @@ func separateConditions(condition retry.ConditionRetryer) conditionSeparationRes
 	
 	// If it's a single success condition, return it as a success condition
 	if isSuccessCondition(condition) {
-		// Return a default stop condition (max tries = 1) and the success condition
+		// Return infinite retries so the success condition controls when to stop
 		return conditionSeparationResult{
-			stopCondition:     retry.NewStopOnMaxTries(1),
+			stopCondition:     retry.NewStopOnMaxTries(0),
 			successConditions: []retry.ConditionRetryer{condition},
 		}
 	}
@@ -1448,8 +1458,8 @@ func separateCompositeConditions(comp *retry.CompositeCondition) conditionSepara
 	var finalStopCondition retry.ConditionRetryer
 	switch len(stopConditions) {
 	case 0:
-		// No stop conditions, use default
-		finalStopCondition = retry.NewStopOnMaxTries(1)
+		// No stop conditions — allow infinite retries so success conditions control stopping
+		finalStopCondition = retry.NewStopOnMaxTries(0)
 	case 1:
 		finalStopCondition = stopConditions[0]
 	default:
@@ -1531,6 +1541,9 @@ func determineStatus(err error) string {
 	}
 	if errors.Is(err, context.Canceled) {
 		return "interrupted"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
 	}
 	return "failure"
 }

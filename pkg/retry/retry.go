@@ -94,6 +94,8 @@ var (
 	ErrEmptyCommand = errors.New("empty command")
 	// ErrCommandTerminatedBySignal is returned when the command is terminated by signal.
 	ErrCommandTerminatedBySignal = errors.New("command terminated by signal")
+	// ErrFailConditionMet is returned when a fail condition (e.g., --fail-if-contains) is triggered.
+	ErrFailConditionMet = errors.New("fail condition matched")
 )
 
 const (
@@ -339,16 +341,22 @@ func (r *Retry) getFinalError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return fmt.Errorf("context error: %w", ctx.Err())
 	}
-	
+
 	if r.condition.GetCtx().Err() != nil {
 		return fmt.Errorf("context error: %w", r.condition.GetCtx().Err())
 	}
-	
+
 	// If success conditions were met, don't return max tries error
 	if r.isSuccessConditionMet() {
 		return nil
 	}
-	
+
+	// A fail condition result must propagate as-is; do not override it with
+	// ErrMaxTriesReached even when the composite condition also reports IsLimitReached.
+	if errors.Is(err, ErrFailConditionMet) {
+		return err
+	}
+
 	if r.condition.IsLimitReached() && err != nil {
 		return ErrMaxTriesReached
 	}
@@ -666,6 +674,17 @@ func (r *Retry) executeRetryLoop(ctx context.Context, appLogger logger.Logger) e
 
 		err = r.executeSingleTryWithLogger(ctx, appLogger)
 
+		// Check fail conditions first — they override success
+		failCondMet := r.isFailConditionMet()
+		if failCondMet {
+			if appLogger != nil {
+				appLogger.Warn("Fail condition triggered, stopping immediately",
+					"attempt", r.tries, "exit_code", r.getLastExitCode())
+			}
+			err = ErrFailConditionMet
+			break
+		}
+
 		// Check if this is a success condition (even if err != nil)
 		// Success conditions that have IsLimitReached() == true mean success was achieved
 		successCondMet := r.isSuccessConditionMet()
@@ -740,6 +759,32 @@ func (r *Retry) isSuccessConditionMet() bool {
 		return r.checkCompositeForSuccess(cond)
 	}
 	
+	return false
+}
+
+// isFailConditionMet checks if any fail condition (e.g., FailIfContains) has been triggered.
+func (r *Retry) isFailConditionMet() bool {
+	// Check dedicated success conditions (FailIfContains may be among them)
+	for _, cond := range r.successConditions {
+		if f, ok := cond.(*FailIfContains); ok && f.IsLimitReached() {
+			return true
+		}
+	}
+
+	// Check the main condition
+	if f, ok := r.condition.(*FailIfContains); ok {
+		return f.IsLimitReached()
+	}
+
+	// Check sub-conditions of a composite
+	if comp, ok := r.condition.(*CompositeCondition); ok {
+		for _, cond := range comp.GetConditions() {
+			if f, ok := cond.(*FailIfContains); ok && f.IsLimitReached() {
+				return true
+			}
+		}
+	}
+
 	return false
 }
 
