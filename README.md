@@ -1,4 +1,3 @@
-[![Go Report Card](https://goreportcard.com/badge/github.com/sgaunet/retry)](https://goreportcard.com/report/github.com/sgaunet/retry)
 ![GitHub Downloads](https://img.shields.io/github/downloads/sgaunet/retry/total)
 ![GitHub Release](https://img.shields.io/github/v/release/sgaunet/retry)
 ![Test Coverage](https://raw.githubusercontent.com/wiki/sgaunet/retry/coverage-badge.svg)
