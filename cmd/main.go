@@ -216,7 +216,14 @@ if it contains spaces or special characters.`,
   retry config show --profile api-calls
 
   # Validate config file
-  retry config validate`,
+  retry config validate
+
+  # Shell Completion (Issue #56)
+  # Enable completions for the current bash session
+  source <(retry completion bash)
+
+  # Install zsh completions permanently
+  retry completion zsh > "${fpath[1]}/_retry"`,
 	Args: func(_ *cobra.Command, args []string) error {
 		// Check if command is provided as positional argument
 		if len(args) > 0 {
@@ -354,6 +361,7 @@ func init() {
 	setupPolicyFlags()
 	setupConfigFlags()
 	setupConfigCommands()
+	setupCompletionCommand()
 
 	setupEnvironmentBindings()
 	bindFlagsToViper()
