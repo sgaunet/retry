@@ -50,19 +50,67 @@ retry -B exp -b 500ms -M 1m -t 10 "network-dependent-command"
 ## All Available Options
 
 ```
-$ ./retry --help
+$ retry --help
+retry is a CLI tool that executes commands repeatedly until they succeed
+or a specified limit is reached. This is useful for handling flaky tests,
+waiting for services to become available, or dealing with transient failures.
+
+The command to retry should be provided as a positional argument and quoted
+if it contains spaces or special characters.
+
 Usage:
   retry [flags] "command"
+  retry [command]
+
+Examples:
+  (110 lines of examples omitted - run "retry --help" to see them)
+
+Available Commands:
+  completion  Generate completion script
+  config      Manage retry configuration files
+  help        Help about any command
+  version     Print the version number
 
 Flags:
-  -B, --backoff string      backoff strategy (fixed, exponential) (default "fixed")
-  -b, --base-delay string   base delay for exponential backoff (default "1s")
-  -d, --delay string        delay between retries (e.g., 1s, 500ms, 2m) (default "0s")
-  -h, --help                help for retry
-  -M, --max-delay string    maximum delay for exponential backoff (default "5m")
-  -t, --max-tries uint      maximum number of retry attempts (0 for infinite) (default 3)
-      --multiplier float    multiplier for exponential backoff (default 2)
-  -v, --verbose             enable verbose output
+  -B, --backoff string                  backoff strategy (fixed, exponential, linear, fibonacci, custom) (default "fixed")
+  -b, --base-delay string               base delay for backoff strategies (default "1s")
+      --condition-logic string          logic for multiple conditions (AND or OR) (default "OR")
+  -c, --config string                   path to config file
+  -d, --delay string                    delay between retries (e.g., 1s, 500ms, 2m) (default "0s")
+      --delays string                   comma-separated custom delays (e.g., 1s,2s,5s,10s)
+      --fail-if-contains string         fail immediately if pattern found
+  -h, --help                            help for retry
+      --increment string                increment for linear backoff (default "500ms")
+  -j, --jitter float                    jitter percentage (0.0-1.0) to add randomness
+      --json                            output results as JSON
+      --json-pretty                     output results as pretty-printed JSON
+      --list-policies                   list all available retry policies
+  -f, --log-file string                 write logs to file
+  -l, --log-level string                set log level (error, warn, info, debug) (default "info")
+  -M, --max-delay string                maximum delay cap for backoff strategies (default "5m")
+  -t, --max-tries uint                  maximum number of retry attempts (0 for infinite) (default 3)
+      --multiplier float                multiplier for exponential backoff (default 2)
+  -P, --policy string                   use a named retry policy preset
+      --profile string                  named profile from config file
+  -q, --quiet                           minimal output (only show final result)
+      --quiet-retries                   only show command output on final attempt
+      --retry-if-contains string        retry if output contains pattern
+      --retry-on-exit string            only retry on specific exit codes (comma-separated)
+      --retry-regex string              retry if output matches regex
+      --show-policy string              show details for a specific policy
+      --stop-at string                  stop at specific time (HH:MM format)
+      --stop-on-exit string             stop on specific exit codes (comma-separated)
+      --stop-when-contains string       stop when output contains pattern
+      --stop-when-not-contains string   stop when output doesn't contain pattern
+      --success-contains string         success if output contains pattern
+      --success-on-exit string          consider these exit codes as success (comma-separated)
+      --success-regex string            success if output matches regex
+      --summary-only                    only show final summary
+      --timeout string                  stop after duration (e.g., 5m, 30s)
+  -v, --verbose                         enable verbose output
+  -V, --verbose-output                  show detailed timing and condition info
+
+Use "retry [command] --help" for more information about a command.
 ```
 
 ## Environment Variables
