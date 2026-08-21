@@ -174,6 +174,68 @@ For comprehensive CLI usage examples, see the [examples/](examples/) directory:
 - **Testing**: [Flaky tests](examples/testing/flaky-tests.sh), [E2E tests](examples/testing/e2e-with-retry.sh)
 - **Services**: [Startup waiting](examples/services/service-startup-wait.sh), [Dependencies](examples/services/dependency-check.sh)
 
+## Shell Completion
+
+`retry` ships completion scripts for bash, zsh, fish and PowerShell. They complete
+subcommands, flags and flag values (backoff strategies, policy presets, log levels,
+and the profiles declared in your config file).
+
+### Bash
+
+```bash
+# Current session only
+source <(retry completion bash)
+
+# Persistent install (Linux)
+retry completion bash > /etc/bash_completion.d/retry
+
+# Persistent install (macOS, Homebrew)
+retry completion bash > "$(brew --prefix)/etc/bash_completion.d/retry"
+```
+
+### Zsh
+
+```bash
+# Current session only
+source <(retry completion zsh)
+
+# Persistent install
+retry completion zsh > "${fpath[1]}/_retry"
+```
+
+If completion is not enabled yet in your shell, add `autoload -U compinit; compinit`
+to your `~/.zshrc` first.
+
+### Fish
+
+```bash
+# Current session only
+retry completion fish | source
+
+# Persistent install
+retry completion fish > ~/.config/fish/completions/retry.fish
+```
+
+### PowerShell
+
+```powershell
+# Current session only
+retry completion powershell | Out-String | Invoke-Expression
+
+# Persistent install
+retry completion powershell >> $PROFILE
+```
+
+Once installed, tab completion suggests flags and their values:
+
+```bash
+retry --backoff <TAB>
+# fixed  exponential  linear  fibonacci  custom
+
+retry --policy <TAB>
+# aggressive  cautious  database  fast  infinite  network  standard  test
+```
+
 # Install
 
 ## From binary 
