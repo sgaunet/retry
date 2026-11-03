@@ -38,10 +38,10 @@ var configFileExtensions = []cobra.Completion{"yaml", "yml"}
 // for which suggesting file names is never useful.
 var noFileCompletionFlags = []string{
 	"max-tries", "delay", "base-delay", "max-delay", "multiplier", "increment",
-	"jitter", "delays", "timeout", "stop-at", "stop-on-exit", "stop-when-contains",
-	"stop-when-not-contains", "retry-on-exit", "success-on-exit",
-	"retry-if-contains", "success-contains", "fail-if-contains", "success-regex",
-	"retry-regex",
+	"jitter", "delays", flagTimeout, flagStopAt, flagStopOnExit, flagStopWhenContains,
+	flagStopWhenNotContains, flagRetryOnExit, flagSuccessOnExit,
+	flagRetryIfContains, flagSuccessContains, flagFailIfContains, flagSuccessRegex,
+	flagRetryRegex,
 }
 
 // registerFlagCompletions wires value completions for the root command flags.

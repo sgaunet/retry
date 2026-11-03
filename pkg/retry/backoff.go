@@ -5,6 +5,16 @@ import (
 	"time"
 )
 
+// Backoff strategy names used by policies and diagnostic logs.
+const (
+	backoffFixed       = "fixed"
+	backoffExponential = "exponential"
+	backoffLinear      = "linear"
+	backoffFibonacci   = "fibonacci"
+	backoffJitter      = "jitter"
+	backoffCustom      = "custom"
+)
+
 // BackoffStrategy defines the interface for different backoff strategies.
 type BackoffStrategy interface {
 	NextDelay(attempt int) time.Duration
