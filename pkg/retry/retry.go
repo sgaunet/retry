@@ -386,12 +386,12 @@ func (r *Retry) logBackoffDelay(delay time.Duration, appLogger logger.Logger) {
 		appLogger.Debug("Applying fixed backoff delay",
 			"delay", delay,
 			"attempt", r.tries,
-			"strategy", "fixed")
+			"strategy", backoffFixed)
 	case *ExponentialBackoff:
 		appLogger.Debug("Applying exponential backoff delay",
 			"delay", delay,
 			"attempt", r.tries,
-			"strategy", "exponential",
+			"strategy", backoffExponential,
 			"base_delay", b.BaseDelay,
 			"max_delay", b.MaxDelay,
 			"multiplier", b.Multiplier)
@@ -399,22 +399,22 @@ func (r *Retry) logBackoffDelay(delay time.Duration, appLogger logger.Logger) {
 		appLogger.Debug("Applying linear backoff delay",
 			"delay", delay,
 			"attempt", r.tries,
-			"strategy", "linear")
+			"strategy", backoffLinear)
 	case *FibonacciBackoff:
 		appLogger.Debug("Applying fibonacci backoff delay",
 			"delay", delay,
 			"attempt", r.tries,
-			"strategy", "fibonacci")
+			"strategy", backoffFibonacci)
 	case *JitterBackoff:
 		appLogger.Debug("Applying jitter backoff delay (with randomization)",
 			"delay", delay,
 			"attempt", r.tries,
-			"strategy", "jitter")
+			"strategy", backoffJitter)
 	default:
 		appLogger.Debug("Applying custom backoff delay",
 			"delay", delay,
 			"attempt", r.tries,
-			"strategy", "custom")
+			"strategy", backoffCustom)
 	}
 }
 
@@ -524,8 +524,7 @@ func getExitCode(err error) int {
 		return 0
 	}
 	
-	var exitError *exec.ExitError
-	if errors.As(err, &exitError) {
+	if exitError, ok := errors.AsType[*exec.ExitError](err); ok {
 		return exitError.ExitCode()
 	}
 	

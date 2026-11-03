@@ -269,34 +269,34 @@ func setupBackoffFlags() {
 }
 
 func setupStopConditionFlags() {
-	rootCmd.Flags().StringVar(&timeout, "timeout", "", "stop after duration (e.g., 5m, 30s)")
-	rootCmd.Flags().StringVar(&stopOnExit, "stop-on-exit", "", "stop on specific exit codes (comma-separated)")
-	rootCmd.Flags().StringVar(&stopWhenContains, "stop-when-contains", "", "stop when output contains pattern")
-	rootCmd.Flags().StringVar(&stopWhenNotContains, "stop-when-not-contains", "",
+	rootCmd.Flags().StringVar(&timeout, flagTimeout, "", "stop after duration (e.g., 5m, 30s)")
+	rootCmd.Flags().StringVar(&stopOnExit, flagStopOnExit, "", "stop on specific exit codes (comma-separated)")
+	rootCmd.Flags().StringVar(&stopWhenContains, flagStopWhenContains, "", "stop when output contains pattern")
+	rootCmd.Flags().StringVar(&stopWhenNotContains, flagStopWhenNotContains, "",
 		"stop when output doesn't contain pattern")
-	rootCmd.Flags().StringVar(&stopAt, "stop-at", "", "stop at specific time (HH:MM format)")
+	rootCmd.Flags().StringVar(&stopAt, flagStopAt, "", "stop at specific time (HH:MM format)")
 	rootCmd.Flags().StringVar(&conditionLogic, "condition-logic", "OR", "logic for multiple conditions (AND or OR)")
 }
 
 func setupSuccessFailureFlags() {
 	// Exit code conditions
-	rootCmd.Flags().StringVar(&retryOnExit, "retry-on-exit", "", 
+	rootCmd.Flags().StringVar(&retryOnExit, flagRetryOnExit, "", 
 		"only retry on specific exit codes (comma-separated)")
-	rootCmd.Flags().StringVar(&successOnExit, "success-on-exit", "", 
+	rootCmd.Flags().StringVar(&successOnExit, flagSuccessOnExit, "", 
 		"consider these exit codes as success (comma-separated)")
 	
 	// Pattern-based conditions
-	rootCmd.Flags().StringVar(&retryIfContains, "retry-if-contains", "", 
+	rootCmd.Flags().StringVar(&retryIfContains, flagRetryIfContains, "", 
 		"retry if output contains pattern")
-	rootCmd.Flags().StringVar(&successContains, "success-contains", "", 
+	rootCmd.Flags().StringVar(&successContains, flagSuccessContains, "", 
 		"success if output contains pattern")
-	rootCmd.Flags().StringVar(&failIfContains, "fail-if-contains", "", 
+	rootCmd.Flags().StringVar(&failIfContains, flagFailIfContains, "", 
 		"fail immediately if pattern found")
 	
 	// Regex conditions
-	rootCmd.Flags().StringVar(&successRegex, "success-regex", "", 
+	rootCmd.Flags().StringVar(&successRegex, flagSuccessRegex, "", 
 		"success if output matches regex")
-	rootCmd.Flags().StringVar(&retryRegex, "retry-regex", "", 
+	rootCmd.Flags().StringVar(&retryRegex, flagRetryRegex, "", 
 		"retry if output matches regex")
 }
 
@@ -335,10 +335,10 @@ func setupEnvironmentBindings() {
 func bindFlagsToViper() {
 	flags := []string{
 		"max-tries", "delay", "verbose", "backoff", "base-delay", "max-delay",
-		"multiplier", "increment", "jitter", "delays", "timeout", "stop-on-exit",
-		"stop-when-contains", "stop-when-not-contains", "stop-at", "condition-logic",
-		"retry-on-exit", "success-on-exit", "retry-if-contains", "success-contains",
-		"fail-if-contains", "success-regex", "retry-regex",
+		"multiplier", "increment", "jitter", "delays", flagTimeout, flagStopOnExit,
+		flagStopWhenContains, flagStopWhenNotContains, flagStopAt, "condition-logic",
+		flagRetryOnExit, flagSuccessOnExit, flagRetryIfContains, flagSuccessContains,
+		flagFailIfContains, flagSuccessRegex, flagRetryRegex,
 		"quiet-retries", "summary-only", "verbose-output",
 		"quiet", "log-file", "log-level",
 		"json", "json-pretty",
@@ -434,43 +434,43 @@ func applyProfileToGlobals(cmd *cobra.Command, p config.ProfileConfig) {
 	if p.Delays != "" && !cmd.Flags().Changed("delays") {
 		delays = p.Delays
 	}
-	if p.Timeout != "" && !cmd.Flags().Changed("timeout") {
+	if p.Timeout != "" && !cmd.Flags().Changed(flagTimeout) {
 		timeout = p.Timeout
 	}
-	if p.StopOnExit != "" && !cmd.Flags().Changed("stop-on-exit") {
+	if p.StopOnExit != "" && !cmd.Flags().Changed(flagStopOnExit) {
 		stopOnExit = p.StopOnExit
 	}
-	if p.StopWhenContains != "" && !cmd.Flags().Changed("stop-when-contains") {
+	if p.StopWhenContains != "" && !cmd.Flags().Changed(flagStopWhenContains) {
 		stopWhenContains = p.StopWhenContains
 	}
-	if p.StopWhenNotContains != "" && !cmd.Flags().Changed("stop-when-not-contains") {
+	if p.StopWhenNotContains != "" && !cmd.Flags().Changed(flagStopWhenNotContains) {
 		stopWhenNotContains = p.StopWhenNotContains
 	}
-	if p.StopAt != "" && !cmd.Flags().Changed("stop-at") {
+	if p.StopAt != "" && !cmd.Flags().Changed(flagStopAt) {
 		stopAt = p.StopAt
 	}
 	if p.ConditionLogic != "" && !cmd.Flags().Changed("condition-logic") {
 		conditionLogic = p.ConditionLogic
 	}
-	if p.RetryOnExit != "" && !cmd.Flags().Changed("retry-on-exit") {
+	if p.RetryOnExit != "" && !cmd.Flags().Changed(flagRetryOnExit) {
 		retryOnExit = p.RetryOnExit
 	}
-	if p.SuccessOnExit != "" && !cmd.Flags().Changed("success-on-exit") {
+	if p.SuccessOnExit != "" && !cmd.Flags().Changed(flagSuccessOnExit) {
 		successOnExit = p.SuccessOnExit
 	}
-	if p.RetryIfContains != "" && !cmd.Flags().Changed("retry-if-contains") {
+	if p.RetryIfContains != "" && !cmd.Flags().Changed(flagRetryIfContains) {
 		retryIfContains = p.RetryIfContains
 	}
-	if p.SuccessContains != "" && !cmd.Flags().Changed("success-contains") {
+	if p.SuccessContains != "" && !cmd.Flags().Changed(flagSuccessContains) {
 		successContains = p.SuccessContains
 	}
-	if p.FailIfContains != "" && !cmd.Flags().Changed("fail-if-contains") {
+	if p.FailIfContains != "" && !cmd.Flags().Changed(flagFailIfContains) {
 		failIfContains = p.FailIfContains
 	}
-	if p.SuccessRegex != "" && !cmd.Flags().Changed("success-regex") {
+	if p.SuccessRegex != "" && !cmd.Flags().Changed(flagSuccessRegex) {
 		successRegex = p.SuccessRegex
 	}
-	if p.RetryRegex != "" && !cmd.Flags().Changed("retry-regex") {
+	if p.RetryRegex != "" && !cmd.Flags().Changed(flagRetryRegex) {
 		retryRegex = p.RetryRegex
 	}
 	if p.Quiet != nil && !cmd.Flags().Changed("quiet") {
@@ -1161,8 +1161,8 @@ func collectConditions(cmd *cobra.Command, maxTries uint) ([]retry.ConditionRetr
 //nolint:ireturn // Factory function needs to return interface
 func addTimeoutCondition(cmd *cobra.Command) (retry.ConditionRetryer, error) {
 	timeoutValue := timeout
-	if !cmd.Flags().Changed("timeout") {
-		if envTimeout := viper.GetString("timeout"); envTimeout != "" {
+	if !cmd.Flags().Changed(flagTimeout) {
+		if envTimeout := viper.GetString(flagTimeout); envTimeout != "" {
 			timeoutValue = envTimeout
 		}
 	}
@@ -1180,8 +1180,8 @@ func addTimeoutCondition(cmd *cobra.Command) (retry.ConditionRetryer, error) {
 //nolint:ireturn // Factory function needs to return interface
 func addExitCodeCondition(cmd *cobra.Command) (retry.ConditionRetryer, error) {
 	exitCodes := stopOnExit
-	if !cmd.Flags().Changed("stop-on-exit") {
-		if envStopOnExit := viper.GetString("stop-on-exit"); envStopOnExit != "" {
+	if !cmd.Flags().Changed(flagStopOnExit) {
+		if envStopOnExit := viper.GetString(flagStopOnExit); envStopOnExit != "" {
 			exitCodes = envStopOnExit
 		}
 	}
@@ -1201,8 +1201,8 @@ func addOutputConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) {
 	
 	// Add output contains condition
 	containsPattern := stopWhenContains
-	if !cmd.Flags().Changed("stop-when-contains") {
-		if envContains := viper.GetString("stop-when-contains"); envContains != "" {
+	if !cmd.Flags().Changed(flagStopWhenContains) {
+		if envContains := viper.GetString(flagStopWhenContains); envContains != "" {
 			containsPattern = envContains
 		}
 	}
@@ -1216,8 +1216,8 @@ func addOutputConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) {
 	
 	// Add output not contains condition
 	notContainsPattern := stopWhenNotContains
-	if !cmd.Flags().Changed("stop-when-not-contains") {
-		if envNotContains := viper.GetString("stop-when-not-contains"); envNotContains != "" {
+	if !cmd.Flags().Changed(flagStopWhenNotContains) {
+		if envNotContains := viper.GetString(flagStopWhenNotContains); envNotContains != "" {
 			notContainsPattern = envNotContains
 		}
 	}
@@ -1235,8 +1235,8 @@ func addOutputConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) {
 //nolint:ireturn // Factory function needs to return interface
 func addTimeOfDayCondition(cmd *cobra.Command) (retry.ConditionRetryer, error) {
 	timeOfDay := stopAt
-	if !cmd.Flags().Changed("stop-at") {
-		if envStopAt := viper.GetString("stop-at"); envStopAt != "" {
+	if !cmd.Flags().Changed(flagStopAt) {
+		if envStopAt := viper.GetString(flagStopAt); envStopAt != "" {
 			timeOfDay = envStopAt
 		}
 	}
@@ -1332,7 +1332,7 @@ func addExitCodeConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error)
 	var conditions []retry.ConditionRetryer
 	
 	// Retry on exit codes
-	if retryOnExitValue := getValueOrEnv(cmd, "retry-on-exit", retryOnExit); retryOnExitValue != "" {
+	if retryOnExitValue := getValueOrEnv(cmd, flagRetryOnExit, retryOnExit); retryOnExitValue != "" {
 		codes, err := parseExitCodes(retryOnExitValue)
 		if err != nil {
 			return nil, fmt.Errorf("invalid retry-on-exit codes: %w", err)
@@ -1341,7 +1341,7 @@ func addExitCodeConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error)
 	}
 	
 	// Success on exit codes
-	if successOnExitValue := getValueOrEnv(cmd, "success-on-exit", successOnExit); successOnExitValue != "" {
+	if successOnExitValue := getValueOrEnv(cmd, flagSuccessOnExit, successOnExit); successOnExitValue != "" {
 		codes, err := parseExitCodes(successOnExitValue)
 		if err != nil {
 			return nil, fmt.Errorf("invalid success-on-exit codes: %w", err)
@@ -1356,7 +1356,7 @@ func addPatternConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) 
 	var conditions []retry.ConditionRetryer
 	
 	// Retry if contains
-	if retryIfContainsValue := getValueOrEnv(cmd, "retry-if-contains", retryIfContains); retryIfContainsValue != "" {
+	if retryIfContainsValue := getValueOrEnv(cmd, flagRetryIfContains, retryIfContains); retryIfContainsValue != "" {
 		condition, err := retry.NewRetryIfContains(retryIfContainsValue)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create retry-if-contains condition: %w", err)
@@ -1365,7 +1365,7 @@ func addPatternConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) 
 	}
 	
 	// Success contains
-	if successContainsValue := getValueOrEnv(cmd, "success-contains", successContains); successContainsValue != "" {
+	if successContainsValue := getValueOrEnv(cmd, flagSuccessContains, successContains); successContainsValue != "" {
 		condition, err := retry.NewSuccessContains(successContainsValue)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create success-contains condition: %w", err)
@@ -1374,7 +1374,7 @@ func addPatternConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) 
 	}
 	
 	// Fail if contains
-	if failIfContainsValue := getValueOrEnv(cmd, "fail-if-contains", failIfContains); failIfContainsValue != "" {
+	if failIfContainsValue := getValueOrEnv(cmd, flagFailIfContains, failIfContains); failIfContainsValue != "" {
 		condition, err := retry.NewFailIfContains(failIfContainsValue)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create fail-if-contains condition: %w", err)
@@ -1389,7 +1389,7 @@ func addRegexConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) {
 	var conditions []retry.ConditionRetryer
 	
 	// Success regex
-	if successRegexValue := getValueOrEnv(cmd, "success-regex", successRegex); successRegexValue != "" {
+	if successRegexValue := getValueOrEnv(cmd, flagSuccessRegex, successRegex); successRegexValue != "" {
 		condition, err := retry.NewSuccessRegex(successRegexValue)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create success-regex condition: %w", err)
@@ -1398,7 +1398,7 @@ func addRegexConditions(cmd *cobra.Command) ([]retry.ConditionRetryer, error) {
 	}
 	
 	// Retry regex
-	if retryRegexValue := getValueOrEnv(cmd, "retry-regex", retryRegex); retryRegexValue != "" {
+	if retryRegexValue := getValueOrEnv(cmd, flagRetryRegex, retryRegex); retryRegexValue != "" {
 		condition, err := retry.NewRetryRegex(retryRegexValue)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create retry-regex condition: %w", err)
@@ -1551,7 +1551,7 @@ func determineStatus(err error) string {
 		return "interrupted"
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return "timeout"
+		return jsonTimeout
 	}
 	return "failure"
 }
@@ -1565,7 +1565,7 @@ func determineStopConditionName(err error) string {
 		return "interrupted"
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return "timeout"
+		return jsonTimeout
 	}
 	if errors.Is(err, retry.ErrMaxTriesReached) {
 		return "max_tries_reached"
@@ -1590,18 +1590,18 @@ func buildConditionsEvaluated(cmd *cobra.Command) map[string]any {
 	}
 
 	flags := []conditionFlag{
-		{"timeout", timeout, "timeout"},
-		{"stop-on-exit", stopOnExit, "stop_on_exit"},
-		{"stop-when-contains", stopWhenContains, "stop_when_contains"},
-		{"stop-when-not-contains", stopWhenNotContains, "stop_when_not_contains"},
-		{"stop-at", stopAt, "stop_at"},
-		{"success-on-exit", successOnExit, "success_on_exit"},
-		{"retry-on-exit", retryOnExit, "retry_on_exit"},
-		{"retry-if-contains", retryIfContains, "retry_if_contains"},
-		{"success-contains", successContains, "success_contains"},
-		{"fail-if-contains", failIfContains, "fail_if_contains"},
-		{"success-regex", successRegex, "success_regex"},
-		{"retry-regex", retryRegex, "retry_regex"},
+		{flagTimeout, timeout, jsonTimeout},
+		{flagStopOnExit, stopOnExit, "stop_on_exit"},
+		{flagStopWhenContains, stopWhenContains, "stop_when_contains"},
+		{flagStopWhenNotContains, stopWhenNotContains, "stop_when_not_contains"},
+		{flagStopAt, stopAt, "stop_at"},
+		{flagSuccessOnExit, successOnExit, "success_on_exit"},
+		{flagRetryOnExit, retryOnExit, "retry_on_exit"},
+		{flagRetryIfContains, retryIfContains, "retry_if_contains"},
+		{flagSuccessContains, successContains, "success_contains"},
+		{flagFailIfContains, failIfContains, "fail_if_contains"},
+		{flagSuccessRegex, successRegex, "success_regex"},
+		{flagRetryRegex, retryRegex, "retry_regex"},
 	}
 
 	for _, f := range flags {

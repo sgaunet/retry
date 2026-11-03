@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// unlimitedTriesLabel is displayed instead of a number when MaxTries is 0.
+const unlimitedTriesLabel = "infinite"
+
 // ErrUnknownPolicy is returned when a policy name is not found in the registry.
 var ErrUnknownPolicy = errors.New("unknown policy")
 
@@ -35,14 +38,14 @@ var policies = map[string]Policy{
 		Name:        "fast",
 		Description: "Quick retries for local/fast operations",
 		MaxTries:    3,
-		Backoff:     "fixed",
+		Backoff:     backoffFixed,
 		Delay:       500 * time.Millisecond,
 	},
 	"standard": {
 		Name:        "standard",
 		Description: "Balanced retry with exponential backoff",
 		MaxTries:    5,
-		Backoff:     "exponential",
+		Backoff:     backoffExponential,
 		BaseDelay:   time.Second,
 		MaxDelay:    30 * time.Second,
 		Multiplier:  2.0,
@@ -51,7 +54,7 @@ var policies = map[string]Policy{
 		Name:        "network",
 		Description: "Network-aware retries with jitter to avoid thundering herd",
 		MaxTries:    10,
-		Backoff:     "exponential",
+		Backoff:     backoffExponential,
 		BaseDelay:   2 * time.Second,
 		MaxDelay:    2 * time.Minute,
 		Jitter:      0.2,
@@ -60,7 +63,7 @@ var policies = map[string]Policy{
 		Name:        "database",
 		Description: "Linear backoff for database reconnection",
 		MaxTries:    10,
-		Backoff:     "linear",
+		Backoff:     backoffLinear,
 		BaseDelay:   3 * time.Second,
 		Increment:   2 * time.Second,
 	},
@@ -68,7 +71,7 @@ var policies = map[string]Policy{
 		Name:        "aggressive",
 		Description: "Many retries with fibonacci backoff for stubborn services",
 		MaxTries:    20,
-		Backoff:     "fibonacci",
+		Backoff:     backoffFibonacci,
 		BaseDelay:   time.Second,
 		MaxDelay:    5 * time.Minute,
 	},
@@ -76,7 +79,7 @@ var policies = map[string]Policy{
 		Name:        "cautious",
 		Description: "Conservative retries with long delays",
 		MaxTries:    5,
-		Backoff:     "exponential",
+		Backoff:     backoffExponential,
 		BaseDelay:   5 * time.Second,
 		MaxDelay:    10 * time.Minute,
 		Multiplier:  2.0,
@@ -85,14 +88,14 @@ var policies = map[string]Policy{
 		Name:        "test",
 		Description: "Simple preset for testing and CI",
 		MaxTries:    3,
-		Backoff:     "fixed",
+		Backoff:     backoffFixed,
 		Delay:       time.Second,
 	},
 	"infinite": {
 		Name:        "infinite",
 		Description: "Unlimited retries with exponential backoff",
 		MaxTries:    0,
-		Backoff:     "exponential",
+		Backoff:     backoffExponential,
 		BaseDelay:   5 * time.Second,
 		MaxDelay:    5 * time.Minute,
 		Multiplier:  2.0,
@@ -189,7 +192,7 @@ func FormatPolicyDetail(name string) (string, error) {
 // formatTries formats the max tries value for display.
 func formatTries(maxTries uint) string {
 	if maxTries == 0 {
-		return "infinite"
+		return unlimitedTriesLabel
 	}
 	return strconv.FormatUint(uint64(maxTries), 10)
 }

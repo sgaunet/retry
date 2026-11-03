@@ -16,11 +16,13 @@ linters:
     - wsl_v5
     - nlreturn
     - depguard
+    - gomodguard
     - gochecknoinits
     - gochecknoglobals
     - forbidigo
     - varnamelen
     - exhaustruct
+    - exhaustruct_v5
     - noinlineerr
     - tagliatelle
     - nolintlint
